@@ -109,6 +109,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
     const totalManagers = managers.length;
 
     let completedManagers = 0;
+    const completedMgrList: string[] = [];
+    const pendingMgrList: string[] = [];
+
     managers.forEach((mgr) => {
       const mgrMasters = deptMasters.filter((m) => m.manager === mgr);
       const allMgrEntered = mgrMasters.every((m) => {
@@ -123,6 +126,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
       });
       if (allMgrEntered) {
         completedManagers++;
+        completedMgrList.push(mgr as string);
+      } else {
+        pendingMgrList.push(mgr as string);
       }
     });
 
@@ -136,6 +142,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
       completedManagers,
       completionRate,
       isComplete,
+      pendingMgrList,
     };
   });
 
@@ -172,7 +179,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
               LX MMA CORPORATE
             </span>
             <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-100 text-[#0F2D59]">
-              단위: 백만원
+              (백만원)
             </span>
           </div>
           <h2 className="text-xl font-bold text-slate-900">전사 예산 집행 및 실적 비교 대시보드</h2>
@@ -277,11 +284,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
                       {ds.completedManagers} / {ds.totalManagers} 명
                     </span>
                   </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                  <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden mb-2">
                     <div
                       className={`h-full rounded-full ${ds.isComplete ? 'bg-emerald-600' : 'bg-[#0F2D59]'}`}
                       style={{ width: `${ds.completionRate}%` }}
                     ></div>
+                  </div>
+                  <div className="text-[11px] text-slate-600 space-y-0.5 border-t border-slate-100 pt-1.5">
+                    <div className="text-slate-500 truncate" title={ds.pendingMgrList.join(', ')}>
+                      <span className="font-semibold text-slate-700">미저장:</span> {ds.pendingMgrList.length > 0 ? ds.pendingMgrList.join(', ') : '없음 (전원 완료)'}
+                    </div>
                   </div>
                   <div className="text-right mt-1 text-[10px] text-slate-400 font-mono">
                     {ds.completionRate}% 완료
@@ -397,13 +409,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
               {/* Row 0: Section Group Header */}
               <tr className="bg-[#0F2D59] text-white text-xs font-bold text-center">
                 <th colSpan={6} className="py-2.5 px-3 border-r border-blue-900 text-left">
-                  기본 정보 (단위: 백만원)
+                  기본 정보 (백만원)
                 </th>
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#14315F]">
-                  {prevRound ? prevRound.name : '이전 회차'} 실적 (5개 월)
+                  {prevRound ? prevRound.name : '이전 회차'}
                 </th>
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#1B3A6B]">
-                  {currentRound?.name || '금번 회차'} 실적 (5개 월)
+                  {currentRound?.name || '금번 회차'}
                 </th>
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#102544]">
                   차이금액 (금번 - 이전)
@@ -418,21 +430,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
                 {/* Prev Round Years */}
                 {yearSpans.map((span, sIdx) => (
                   <th key={`prev-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#1F4075] py-1`}>
-                    {span.year}년
+                    {String(span.year).slice(2)}년
                   </th>
                 ))}
                 
                 {/* Cur Round Years */}
                 {yearSpans.map((span, sIdx) => (
                   <th key={`cur-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#244882] py-1`}>
-                    {span.year}년
+                    {String(span.year).slice(2)}년
                   </th>
                 ))}
 
                 {/* Diff Years */}
                 {yearSpans.map((span, sIdx) => (
                   <th key={`diff-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#16335C] py-1`}>
-                    {span.year}년 차이
+                    {String(span.year).slice(2)}년 차이
                   </th>
                 ))}
 

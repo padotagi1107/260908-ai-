@@ -70,95 +70,106 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
         </button>
       </div>
 
-      {/* Rounds Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {rounds.map((round) => {
-          const isOpen = round.status === 'open';
-          return (
-            <div
-              key={round.id}
-              className={`bg-white rounded-2xl border transition-all shadow-xs overflow-hidden flex flex-col justify-between ${
-                isOpen ? 'border-blue-200 ring-1 ring-blue-500/20' : 'border-slate-200 bg-slate-50/50'
-              }`}
-            >
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-2">
-                    <span className="p-2 rounded-xl bg-slate-100 text-slate-700 font-mono text-xs font-bold">
-                      {round.id}
-                    </span>
-                    <h3 className="text-lg font-bold text-slate-900">{round.name}</h3>
-                  </div>
-                  <span
-                    className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
-                      isOpen
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : 'bg-slate-200 text-slate-700 border border-slate-300'
-                    }`}
-                  >
-                    {isOpen ? (
-                      <>
-                        <Unlock className="w-3 h-3 mr-1" /> 진행중 (입력가능)
-                      </>
-                    ) : (
-                      <>
-                        <Lock className="w-3 h-3 mr-1" /> 마감됨 (입력차단)
-                      </>
-                    )}
-                  </span>
-                </div>
+      {/* Rounds Excel Table */}
+      <div className="bg-white rounded-2xl shadow-xs border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-[#0F2D59] text-white text-xs font-bold text-center">
+                <th className="py-3 px-4 border-r border-blue-900 w-28">회차 ID</th>
+                <th className="py-3 px-4 border-r border-blue-900 text-left">회차 명칭</th>
+                <th className="py-3 px-4 border-r border-blue-900 w-28">대상 월</th>
+                <th className="py-3 px-4 border-r border-blue-900 w-64">입력 기간</th>
+                <th className="py-3 px-4 border-r border-blue-900 w-36">진행 상태</th>
+                <th className="py-3 px-4 w-40">관리 작업</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 text-xs text-slate-700">
+              {rounds.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-slate-400">
+                    등록된 입력 회차가 없습니다. 새 회차를 생성해주세요.
+                  </td>
+                </tr>
+              ) : (
+                rounds.map((round) => {
+                  const isOpen = round.status === 'open';
+                  return (
+                    <tr key={round.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-3 px-4 border-r border-slate-200 font-mono font-semibold text-center text-slate-600 bg-slate-50/50">
+                        {round.id}
+                      </td>
+                      <td className="py-3 px-4 border-r border-slate-200 font-bold text-slate-900">
+                        {round.name}
+                      </td>
+                      <td className="py-3 px-4 border-r border-slate-200 text-center font-medium">
+                        {round.month}월
+                      </td>
+                      <td className="py-3 px-4 border-r border-slate-200 text-center font-mono">
+                        {round.startDate} ~ {round.endDate}
+                      </td>
+                      <td className="py-3 px-4 border-r border-slate-200 text-center">
+                        <span
+                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold ${
+                            isOpen
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-slate-100 text-slate-600 border border-slate-300'
+                          }`}
+                        >
+                          {isOpen ? (
+                            <>
+                              <Unlock className="w-3 h-3 mr-1" /> 진행중 (입력가능)
+                            </>
+                          ) : (
+                            <>
+                              <Lock className="w-3 h-3 mr-1" /> 마감됨 (입력차단)
+                            </>
+                          )}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        <div className="flex items-center justify-center space-x-2">
+                          <button
+                            onClick={() => onToggleRoundStatus(round.id)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1 transition-colors ${
+                              isOpen
+                                ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs'
+                            }`}
+                          >
+                            {isOpen ? (
+                              <>
+                                <Lock className="w-3 h-3" />
+                                <span>마감</span>
+                              </>
+                            ) : (
+                              <>
+                                <Unlock className="w-3 h-3" />
+                                <span>재오픈</span>
+                              </>
+                            )}
+                          </button>
 
-                <div className="space-y-2 text-xs text-slate-600 mb-6">
-                  <div className="flex justify-between py-1 border-b border-slate-100">
-                    <span className="text-slate-400">입력 기간</span>
-                    <span className="font-medium text-slate-800">
-                      {round.startDate} ~ {round.endDate}
-                    </span>
-                  </div>
-                  <div className="flex justify-between py-1 border-b border-slate-100">
-                    <span className="text-slate-400">대상 월</span>
-                    <span className="font-medium text-slate-800">{round.month}월</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => onToggleRoundStatus(round.id)}
-                    className={`flex-1 py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors ${
-                      isOpen
-                        ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
-                        : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs'
-                    }`}
-                  >
-                    {isOpen ? (
-                      <>
-                        <Lock className="w-3.5 h-3.5" />
-                        <span>회차 마감하기</span>
-                      </>
-                    ) : (
-                      <>
-                        <Unlock className="w-3.5 h-3.5" />
-                        <span>마감 해제 (재오픈)</span>
-                      </>
-                    )}
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if (confirm(`"${round.name}" 회차를 삭제하시겠습니까?`)) {
-                        onDeleteRound(round.id);
-                      }
-                    }}
-                    className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                    title="회차 삭제"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+                          <button
+                            onClick={() => {
+                              if (confirm(`"${round.name}" 회차를 삭제하시겠습니까?`)) {
+                                onDeleteRound(round.id);
+                              }
+                            }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            title="회차 삭제"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Add Round Modal */}

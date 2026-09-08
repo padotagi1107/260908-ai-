@@ -45,4 +45,10 @@ export interface EntryData {
   updatedBy?: string;
 }
 
-export type ActiveTab = 'dashboard' | 'entry' | 'master' | 'rounds' | 'users';
+export interface GLMasterItem {
+  id: string;
+  glCode: string; // GL계정
+  glName: string; // GL계정명
+}
+
+export type ActiveTab = 'dashboard' | 'entry' | 'master' | 'gl_master' | 'rounds' | 'users';

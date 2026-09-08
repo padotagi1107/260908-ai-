@@ -1,4 +1,4 @@
-import { Department, EntryData, MasterItem, Round, UserProfile } from './types';
+import { Department, EntryData, MasterItem, GLMasterItem, Round, UserProfile } from './types';
 
 export const DEPARTMENTS: Department[] = ['노경', '환경안전', 'IT보안팀', '구매', '기술팀'];
 
@@ -16,6 +16,19 @@ export const INITIAL_ROUNDS: Round[] = [
   { id: '9-1', name: '26년9-1차', month: 9, seq: 1, status: 'open', startDate: '2026-09-01', endDate: '2026-09-15' },
   { id: '9-2', name: '26년9-2차', month: 9, seq: 2, status: 'open', startDate: '2026-09-16', endDate: '2026-09-30' },
   { id: '10-1', name: '26년10-1차', month: 10, seq: 1, status: 'closed', startDate: '2026-10-01', endDate: '2026-10-15' },
+];
+
+export const INITIAL_GL_MASTER_ITEMS: GLMasterItem[] = [
+  { id: 'gl-1', glCode: '51101000', glName: '급여' },
+  { id: 'gl-2', glCode: '51102000', glName: '복리후생비' },
+  { id: 'gl-3', glCode: '52201000', glName: '소모품비' },
+  { id: 'gl-4', glCode: '52202000', glName: '수선비' },
+  { id: 'gl-5', glCode: '53301000', glName: '지불수수료' },
+  { id: 'gl-6', glCode: '53302000', glName: '유지보수비' },
+  { id: 'gl-7', glCode: '54401000', glName: '원재료비' },
+  { id: 'gl-8', glCode: '54402000', glName: '외주가공비' },
+  { id: 'gl-9', glCode: '55501000', glName: '수선비' },
+  { id: 'gl-10', glCode: '55502000', glName: '지급수수료' },
 ];
 
 export const INITIAL_MASTER_ITEMS: MasterItem[] = [

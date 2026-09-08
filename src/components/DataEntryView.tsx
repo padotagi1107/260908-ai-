@@ -89,6 +89,190 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
   const [draftValues, setDraftValues] = useState<{ [key: string]: number | '' }>({});
   const [draftReasons, setDraftReasons] = useState<{ [key: string]: string }>({});
 
+  // Multi-cell selection & Excel paste support
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
+  const [anchorCell, setAnchorCell] = useState<{ rIdx: number; mIdx: number } | null>(null);
+  const [currentCell, setCurrentCell] = useState<{ rIdx: number; mIdx: number } | null>(null);
+
+  const handleCellClick = (rIdx: number, mIdx: number, e: React.MouseEvent) => {
+    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+    const master = filteredMasterItems[rIdx];
+    if (!master) return;
+    const mKey = monthKeys[mIdx];
+    const cellKey = `${master.id}_${mKey}`;
+
+    setCurrentCell({ rIdx, mIdx });
+
+    if (e.shiftKey && anchorCell) {
+      const minR = Math.min(anchorCell.rIdx, rIdx);
+      const maxR = Math.max(anchorCell.rIdx, rIdx);
+      const minM = Math.min(anchorCell.mIdx, mIdx);
+      const maxM = Math.max(anchorCell.mIdx, mIdx);
+
+      const newSelected = new Set<string>();
+      for (let ri = minR; ri <= maxR; ri++) {
+        for (let mi = minM; mi <= maxM; mi++) {
+          const rm = filteredMasterItems[ri];
+          if (rm) {
+            newSelected.add(`${rm.id}_${monthKeys[mi]}`);
+          }
+        }
+      }
+      setSelectedCells(newSelected);
+    } else {
+      setAnchorCell({ rIdx, mIdx });
+      setSelectedCells(() => {
+        const next = new Set<string>();
+        next.add(cellKey);
+        return next;
+      });
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+    const activeTarget = e.target as HTMLElement;
+    const isInput = activeTarget.tagName === 'INPUT';
+
+    // Ctrl + C (Copy selected cells)
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+      if (selectedCells.size > 0) {
+        e.preventDefault();
+        let minR = Infinity, maxR = -Infinity, minM = Infinity, maxM = -Infinity;
+        selectedCells.forEach(cellKey => {
+          const [mId, mKey] = cellKey.split('_');
+          const rIdx = filteredMasterItems.findIndex(m => m.id === mId);
+          const mIdx = monthKeys.indexOf(mKey as any);
+          if (rIdx !== -1 && mIdx !== -1) {
+            if (rIdx < minR) minR = rIdx;
+            if (rIdx > maxR) maxR = rIdx;
+            if (mIdx < minM) minM = mIdx;
+            if (mIdx > maxM) maxM = mIdx;
+          }
+        });
+
+        if (minR <= maxR && minM <= maxM) {
+          const rowsText: string[] = [];
+          for (let ri = minR; ri <= maxR; ri++) {
+            const rowVals: string[] = [];
+            const rm = filteredMasterItems[ri];
+            for (let mi = minM; mi <= maxM; mi++) {
+              const mk = monthKeys[mi];
+              const val = getCellValue(rm.id, mk);
+              rowVals.push(val !== '' && val !== undefined && val !== null ? String(val) : '');
+            }
+            rowsText.push(rowVals.join('\t'));
+          }
+          navigator.clipboard.writeText(rowsText.join('\n'));
+        }
+      }
+      return;
+    }
+
+    // Delete / Backspace (Clear values in selected cells)
+    if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (selectedCells.size > 0 && !isClosed) {
+        if (!isInput || (isInput && (activeTarget as HTMLInputElement).value === '')) {
+          e.preventDefault();
+          const newDrafts = { ...draftValues };
+          selectedCells.forEach(cellKey => {
+            newDrafts[cellKey] = '';
+          });
+          setDraftValues(newDrafts);
+        }
+      }
+      return;
+    }
+
+    // Arrow navigation & Shift + Arrow range selection
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      if (isInput && !e.shiftKey) {
+        return;
+      }
+
+      if (!currentCell && filteredMasterItems.length > 0) {
+        setCurrentCell({ rIdx: 0, mIdx: 0 });
+        setAnchorCell({ rIdx: 0, mIdx: 0 });
+        setSelectedCells(new Set([`${filteredMasterItems[0].id}_m1`]));
+        return;
+      }
+
+      if (currentCell) {
+        e.preventDefault();
+        let { rIdx, mIdx } = currentCell;
+        if (e.key === 'ArrowUp') rIdx = Math.max(0, rIdx - 1);
+        if (e.key === 'ArrowDown') rIdx = Math.min(filteredMasterItems.length - 1, rIdx + 1);
+        if (e.key === 'ArrowLeft') mIdx = Math.max(0, mIdx - 1);
+        if (e.key === 'ArrowRight') mIdx = Math.min(4, mIdx + 1);
+
+        setCurrentCell({ rIdx, mIdx });
+
+        if (e.shiftKey && anchorCell) {
+          const minR = Math.min(anchorCell.rIdx, rIdx);
+          const maxR = Math.max(anchorCell.rIdx, rIdx);
+          const minM = Math.min(anchorCell.mIdx, mIdx);
+          const maxM = Math.max(anchorCell.mIdx, mIdx);
+
+          const newSelected = new Set<string>();
+          for (let ri = minR; ri <= maxR; ri++) {
+            for (let mi = minM; mi <= maxM; mi++) {
+              const rm = filteredMasterItems[ri];
+              if (rm) {
+                newSelected.add(`${rm.id}_${monthKeys[mi]}`);
+              }
+            }
+          }
+          setSelectedCells(newSelected);
+        } else {
+          setAnchorCell({ rIdx, mIdx });
+          const targetMaster = filteredMasterItems[rIdx];
+          if (targetMaster) {
+            setSelectedCells(new Set([`${targetMaster.id}_${monthKeys[mIdx]}`]));
+          }
+        }
+      }
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>, startMasterId: string, startMonthKey: 'm1'|'m2'|'m3'|'m4'|'m5') => {
+    e.preventDefault();
+    if (isClosed) return;
+    const text = e.clipboardData.getData('text');
+    if (!text) return;
+
+    const rows = text.split(/\r?\n/).filter(r => r.length > 0);
+    const parsedMatrix = rows.map(r => r.split('\t'));
+
+    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+    const startMIdx = monthKeys.indexOf(startMonthKey);
+    const startRIdx = filteredMasterItems.findIndex(m => m.id === startMasterId);
+
+    if (startRIdx === -1 || startMIdx === -1) return;
+
+    const newDrafts = { ...draftValues };
+
+    parsedMatrix.forEach((rowVals, rOffset) => {
+      const targetRIdx = startRIdx + rOffset;
+      if (targetRIdx >= filteredMasterItems.length) return;
+      const targetMaster = filteredMasterItems[targetRIdx];
+
+      rowVals.forEach((valStr, cOffset) => {
+        const targetMIdx = startMIdx + cOffset;
+        if (targetMIdx >= monthKeys.length) return;
+        const targetMKey = monthKeys[targetMIdx];
+
+        const cleaned = valStr.trim().replace(/,/g, '');
+        if (cleaned === '') {
+          newDrafts[`${targetMaster.id}_${targetMKey}`] = '';
+        } else if (!isNaN(Number(cleaned))) {
+          newDrafts[`${targetMaster.id}_${targetMKey}`] = Number(cleaned);
+        }
+      });
+    });
+
+    setDraftValues(newDrafts);
+  };
+
   const roundEntries = entries.filter((e) => e.roundId === selectedRoundId);
 
   // Find previous round for comparison:
@@ -194,8 +378,19 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       alert('현재 회차는 마감되어 데이터를 수정할 수 없습니다.');
       return;
     }
+    // Allow empty string or valid decimal numbers (optionally up to 1 decimal place or standard numeric typing)
     if (val !== '' && isNaN(Number(val))) return;
-    const numericVal = val === '' ? '' : Number(val);
+
+    // If it has decimals, limit to 1 decimal place if user typed more than 1, or just store number
+    let numericVal: number | '' = val === '' ? '' : Number(val);
+    if (typeof numericVal === 'number' && !isNaN(numericVal)) {
+      // round to 1 decimal place if needed or keep as typed
+      const parts = val.split('.');
+      if (parts.length === 2 && parts[1].length > 1) {
+        numericVal = Number(Number(val).toFixed(1));
+      }
+    }
+
     setDraftValues((prev) => ({ ...prev, [`${masterId}_${monthKey}`]: numericVal }));
   };
 
@@ -293,7 +488,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
               LX MMA CORPORATE
             </span>
             <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-100 text-[#0F2D59]">
-              단위: 백만원
+              (백만원)
             </span>
           </div>
           <h2 className="text-xl font-bold text-slate-900">부서별 데이터 입력 및 차이 비교</h2>
@@ -510,20 +705,20 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       </div>
 
       {/* Main Table with Horizontal Scroll & Year Grouping Headers */}
-      <div className="bg-white rounded-2xl shadow-xs border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-xs border border-slate-200 overflow-hidden focus:outline-none focus:ring-2 focus:ring-[#0F2D59]/30" tabIndex={0} onKeyDown={handleKeyDown}>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[1700px]">
             <thead>
               {/* Row 0: Section Group Header */}
               <tr className="bg-[#0F2D59] text-white text-xs font-bold text-center">
                 <th colSpan={6} className="py-2.5 px-3 border-r border-blue-900 text-left">
-                  기본 정보 (단위: 백만원)
+                  기본 정보 (백만원)
                 </th>
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#14315F]">
-                  {prevRound ? prevRound.name : '이전 회차'} 실적 (5개 월)
+                  {prevRound ? prevRound.name : '이전 회차'}
                 </th>
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#1B3A6B]">
-                  {currentRound?.name || '금번 회차'} 실적 (5개 월)
+                  {currentRound?.name || '금번 회차'}
                 </th>
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#102544]">
                   차이금액 (금번 - 이전)
@@ -537,19 +732,19 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                 
                 {yearSpans.map((span, sIdx) => (
                   <th key={`prev-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#1F4075] py-1`}>
-                    {span.year}년
+                    {String(span.year).slice(2)}년
                   </th>
                 ))}
                 
                 {yearSpans.map((span, sIdx) => (
                   <th key={`cur-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#244882] py-1`}>
-                    {span.year}년
+                    {String(span.year).slice(2)}년
                   </th>
                 ))}
 
                 {yearSpans.map((span, sIdx) => (
                   <th key={`diff-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#16335C] py-1`}>
-                    {span.year}년 차이
+                    {String(span.year).slice(2)}년 차이
                   </th>
                 ))}
 
@@ -597,7 +792,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredMasterItems.map((master) => {
+                filteredMasterItems.map((master, rIdx) => {
                   const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
                   const reasonVal = getReasonForMaster(master.id);
                   const isOver10M = hasLargeVariance(master.id);
@@ -634,19 +829,27 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                       {[0, 1, 2, 3, 4].map((idx) => {
                         const mKey = monthKeys[idx];
                         const val = getCellValue(master.id, mKey);
+                        const isSelected = selectedCells.has(`${master.id}_${mKey}`);
+
                         return (
-                          <td key={`cur-${idx}`} className={`py-2 px-2 text-right ${idx === 4 ? 'border-r border-slate-300' : ''}`}>
+                          <td
+                            key={`cur-${idx}`}
+                            onClick={(e) => handleCellClick(rIdx, idx, e)}
+                            className={`py-2 px-2 text-right ${idx === 4 ? 'border-r border-slate-300' : ''} ${isSelected ? 'bg-blue-100/60' : ''}`}
+                          >
                             <input
-                              type="number"
-                              step="0.1"
+                              type="text"
                               inputMode="decimal"
                               disabled={isClosed}
                               value={val}
                               onChange={(e) => handleInputChange(master.id, mKey, e.target.value)}
+                              onPaste={(e) => handlePaste(e, master.id, mKey)}
                               placeholder="0"
                               className={`w-24 text-right px-2 py-1 text-xs font-mono font-bold rounded border ${
                                 isClosed
                                   ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
+                                  : isSelected
+                                  ? 'bg-blue-50 border-blue-500 ring-2 ring-blue-500/30 text-slate-900'
                                   : 'bg-white border-slate-300 focus:border-[#0F2D59] focus:ring-2 focus:ring-[#0F2D59]/20 text-slate-900'
                               }`}
                             />

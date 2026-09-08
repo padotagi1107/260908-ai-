@@ -1,11 +1,12 @@
 import React, { useState, useRef } from 'react';
-import { Department, MasterItem } from '../types';
+import { Department, MasterItem, GLMasterItem } from '../types';
 import { DEPARTMENTS } from '../initialData';
 import { Plus, Trash2, Edit2, Search, X, FileSpreadsheet, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface MasterManagementProps {
   masterItems: MasterItem[];
+  glMasterItems: GLMasterItem[];
   onAddMasterItem: (item: Omit<MasterItem, 'id'>) => void;
   onUpdateMasterItem: (item: MasterItem) => void;
   onDeleteMasterItem: (id: string) => void;
@@ -13,6 +14,7 @@ interface MasterManagementProps {
 
 export const MasterManagement: React.FC<MasterManagementProps> = ({
   masterItems,
+  glMasterItems,
   onAddMasterItem,
   onUpdateMasterItem,
   onDeleteMasterItem,
@@ -28,6 +30,22 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
   const [attribution, setAttribution] = useState<'공통' | 'MTBE4' | 'P3'>('공통');
   const [dept, setDept] = useState<Department>('노경');
   const [manager, setManager] = useState('');
+
+  const handleGlCodeChange = (val: string) => {
+    setGlCode(val);
+    const found = glMasterItems.find((item) => item.glCode.trim() === val.trim());
+    if (found) {
+      setGlName(found.glName);
+    }
+  };
+
+  const handleGlNameChange = (val: string) => {
+    setGlName(val);
+    const found = glMasterItems.find((item) => item.glName.trim() === val.trim());
+    if (found) {
+      setGlCode(found.glCode);
+    }
+  };
 
   const handleOpenAdd = () => {
     setEditingItem(null);
@@ -98,8 +116,17 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
 
         let addedCount = 0;
         data.forEach((row) => {
-          const glCode = String(row['GL계정'] || row['glCode'] || '');
-          const glName = String(row['GL계정명'] || row['glName'] || '');
+          let glCode = String(row['GL계정'] || row['glCode'] || row['GL코드'] || '');
+          let glName = String(row['GL계정명'] || row['glName'] || '');
+
+          if (glCode && !glName) {
+            const found = glMasterItems.find((g) => g.glCode.trim() === glCode.trim());
+            if (found) glName = found.glName;
+          } else if (!glCode && glName) {
+            const found = glMasterItems.find((g) => g.glName.trim() === glName.trim());
+            if (found) glCode = found.glCode;
+          }
+
           const subItem = String(row['세목'] || row['subItem'] || '');
           let attribution = String(row['귀속'] || row['attribution'] || '공통') as any;
           if (!['공통', 'MTBE4', 'P3'].includes(attribution)) attribution = '공통';
@@ -333,23 +360,35 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
                   <label className="block text-xs font-semibold text-slate-700 mb-1">GL계정 (코드)</label>
                   <input
                     type="text"
+                    list="gl-code-list"
                     placeholder="예: 51101000"
                     value={glCode}
-                    onChange={(e) => setGlCode(e.target.value)}
+                    onChange={(e) => handleGlCodeChange(e.target.value)}
                     className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white"
                     required
                   />
+                  <datalist id="gl-code-list">
+                    {glMasterItems.map((item) => (
+                      <option key={item.id} value={item.glCode} label={item.glName} />
+                    ))}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">GL계정명</label>
                   <input
                     type="text"
+                    list="gl-name-list"
                     placeholder="예: 급여"
                     value={glName}
-                    onChange={(e) => setGlName(e.target.value)}
+                    onChange={(e) => handleGlNameChange(e.target.value)}
                     className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white"
                     required
                   />
+                  <datalist id="gl-name-list">
+                    {glMasterItems.map((item) => (
+                      <option key={item.id} value={item.glName} label={item.glCode} />
+                    ))}
+                  </datalist>
                 </div>
               </div>
 
