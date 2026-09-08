@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Jua', sans-serif;
+    background-color: #fdfbf7;
+    background-image: radial-gradient(#e5dec9 0.75px, transparent 0.75px);
+    background-size: 24px 24px;
+    color: #4a453e;
+  }
+}
+
+.font-jua {
+  font-family: 'Jua', sans-serif;
+}
+
+.font-gaegu {
+  font-family: 'Gaegu', cursive;
+}
+
+.font-pen {
+  font-family: 'Nanum Pen Script', cursive;
+}
+
+/* Sketchy hand-drawn border effects */
+.sketch-border {
+  border: 3px dashed #8c8275;
+  border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+  box-shadow: 2px 3px 0px rgba(140, 130, 117, 0.2);
+}
+
+.sketch-card {
+  border: 2.5px solid #6b5b52;
+  border-radius: 20px 255px 20px 255px/255px 20px 255px 20px;
+  background-color: #ffffff;
+  box-shadow: 3px 5px 0px rgba(107, 91, 82, 0.15);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sketch-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 4px 7px 0px rgba(107, 91, 82, 0.2);
+}
+
+.sketch-btn {
+  border: 2px solid #59483f;
+  border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+  transition: all 0.15s ease;
+  box-shadow: 2px 3px 0px rgba(89, 72, 63, 0.3);
+}
+
+.sketch-btn:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 3px 5px 0px rgba(89, 72, 63, 0.4);
+}
+
+.sketch-btn:active {
+  transform: translateY(1px);
+  box-shadow: 1px 1px 0px rgba(89, 72, 63, 0.4);
+}
+
+.sketch-input {
+  border: 2px dashed #8c8275;
+  border-radius: 255px 15px 225px 15px/15px 225px 15px 255px;
+  background-color: #fffefb;
+  padding: 8px 16px;
+  outline: none;
+}
+
+.sketch-input:focus {
+  border-style: solid;
+  border-color: #d97706;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.2);
+}
+
+/* Custom scrollbar for cute sketchbook feel */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #f7f3e8;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4c5b9;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b5a495;
+}

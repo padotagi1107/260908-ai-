@@ -1,0 +1,8 @@
+{
+  "name": "Remix LX MMA 사내 데이터 취합 플랫폼",
+  "description": "LX MMA 부서별 데이터 취합 및 회차 마감 통제 시스템",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
