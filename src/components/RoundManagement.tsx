@@ -76,11 +76,11 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-[#0F2D59] text-white text-xs font-bold text-center">
-                <th className="py-3 px-4 border-r border-blue-900 w-28">회차 ID</th>
-                <th className="py-3 px-4 border-r border-blue-900 text-left">회차 명칭</th>
-                <th className="py-3 px-4 border-r border-blue-900 w-28">대상 월</th>
-                <th className="py-3 px-4 border-r border-blue-900 w-64">입력 기간</th>
-                <th className="py-3 px-4 border-r border-blue-900 w-36">진행 상태</th>
+                <th className="py-3 px-4 border-r border-blue-900 w-24">회차 ID</th>
+                <th className="py-3 px-4 border-r border-blue-900 text-left w-36">회차 명칭</th>
+                <th className="py-3 px-4 border-r border-blue-900 w-24">대상 월</th>
+                <th className="py-3 px-4 border-r border-blue-900 w-56">입력 기간</th>
+                <th className="py-3 px-4 border-r border-blue-900 w-56 min-w-[200px]">진행 상태</th>
                 <th className="py-3 px-4 w-40">관리 작업</th>
               </tr>
             </thead>

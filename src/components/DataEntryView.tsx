@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Department, EntryData, MasterItem, Round, UserProfile } from '../types';
 import { DEPARTMENTS } from '../initialData';
 import { Lock, Unlock, Save } from 'lucide-react';
@@ -32,12 +32,61 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
   const [filterGlCode, setFilterGlCode] = useState('');
   const [filterGlName, setFilterGlName] = useState('');
   const [filterSubItem, setFilterSubItem] = useState('');
-  const [filterAttribution, setFilterAttribution] = useState<'all' | '공통' | 'MTBE4' | 'P3'>('all');
-  const [filterDept, setFilterDept] = useState<Department | 'all'>('all');
+  const [filterAttribution, setFilterAttribution] = useState('');
+  const [filterDept, setFilterDept] = useState<string>('all');
   const [filterManager, setFilterManager] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterMinDiff, setFilterMinDiff] = useState<string>('');
   const [filterMaxDiff, setFilterMaxDiff] = useState<string>('');
+
+  // Distinct DB options for filters with both code and name
+  const distinctGlAccounts = useMemo(() => {
+    const map = new Map<string, { glCode: string; glName: string }>();
+    masterItems.forEach((m) => {
+      if (m.glCode && !map.has(m.glCode)) {
+        map.set(m.glCode, { glCode: m.glCode, glName: m.glName || '' });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.glCode.localeCompare(b.glCode));
+  }, [masterItems]);
+
+  const distinctGlNames = useMemo(() => {
+    const map = new Map<string, { glCode: string; glName: string }>();
+    masterItems.forEach((m) => {
+      if (m.glName && !map.has(m.glName)) {
+        map.set(m.glName, { glCode: m.glCode || '', glName: m.glName });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.glName.localeCompare(b.glName));
+  }, [masterItems]);
+
+  const distinctSubItems = useMemo(() => {
+    return Array.from(new Set(masterItems.map((m) => m.subItem).filter(Boolean))).sort();
+  }, [masterItems]);
+
+  const distinctAttributions = useMemo(() => {
+    return Array.from(new Set(masterItems.map((m) => m.attribution).filter(Boolean))).sort();
+  }, [masterItems]);
+
+  const distinctDepartments = useMemo(() => {
+    return Array.from(new Set(masterItems.map((m) => m.dept).filter(Boolean))).sort();
+  }, [masterItems]);
+
+  const distinctManagers = useMemo(() => {
+    return Array.from(new Set(masterItems.map((m) => m.manager).filter(Boolean))).sort();
+  }, [masterItems]);
+
+  const handleResetFilters = () => {
+    setFilterGlCode('');
+    setFilterGlName('');
+    setFilterSubItem('');
+    setFilterAttribution('');
+    setFilterDept('all');
+    setFilterManager('');
+    setFilterMinDiff('');
+    setFilterMaxDiff('');
+    setFilterStatus('all');
+  };
 
   const currentRound = rounds.find((r) => r.id === selectedRoundId);
   const isClosed = currentRound?.status === 'closed';
@@ -333,12 +382,12 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
   const filteredMasterItems = masterItems.filter((m) => {
     const userDeptCheck = currentUser.role === 'dept_user' ? currentUser.department : selectedDept;
     const matchesUserDept = userDeptCheck === 'all' || !userDeptCheck || m.dept === userDeptCheck;
-    const matchesFilterDept = filterDept === 'all' || m.dept === filterDept;
+    const matchesFilterDept = !filterDept || filterDept === 'all' || (m.dept || '').toLowerCase().includes(filterDept.toLowerCase());
 
     const matchesGl = (m.glCode || '').toLowerCase().includes((filterGlCode || '').toLowerCase());
     const matchesGlName = (m.glName || '').toLowerCase().includes((filterGlName || '').toLowerCase());
     const matchesSub = (m.subItem || '').toLowerCase().includes((filterSubItem || '').toLowerCase());
-    const matchesAttr = filterAttribution === 'all' || m.attribution === filterAttribution;
+    const matchesAttr = !filterAttribution || filterAttribution === 'all' || (m.attribution || '').toLowerCase().includes(filterAttribution.toLowerCase());
     const matchesManager = (m.manager || '').toLowerCase().includes((filterManager || '').toLowerCase());
 
     const entry = roundEntries.find((e) => e.masterId === m.id);
@@ -615,85 +664,129 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
         </div>
       )}
 
-      {/* Filters Bar matching order: GL계정 / GL계정명 / 세목 / 귀속 / 주관부서 / 담당자 */}
+      {/* Filters Bar with Datalists (직접입력 및 목록상자 선택 가능) */}
       <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-4">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-bold text-slate-700">검색 및 필터 조건 (GL계정 / GL계정명 / 세목 / 귀속 / 주관부서 / 담당자 / 상태)</span>
-          <span className="text-xs text-slate-400">총 {filteredMasterItems.length}개 항목</span>
+          <span className="text-xs font-bold text-slate-700">
+            검색 및 필터 조건 (직접입력 및 목록상자 선택 가능)
+          </span>
+          <div className="flex items-center space-x-3">
+            <span className="text-xs text-slate-400">총 {filteredMasterItems.length}개 항목</span>
+            {(filterGlCode || filterGlName || filterSubItem || filterAttribution || filterDept !== 'all' || filterManager || filterMinDiff !== '' || filterMaxDiff !== '' || filterStatus !== 'all') && (
+              <button
+                onClick={handleResetFilters}
+                className="text-[11px] text-red-600 hover:text-red-700 font-semibold cursor-pointer underline"
+              >
+                필터 초기화
+              </button>
+            )}
+          </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-3">
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정</label>
             <input
               type="text"
-              placeholder="GL코드..."
+              list="entry-gl-codes"
+              placeholder="GL코드 선택/입력..."
               value={filterGlCode}
               onChange={(e) => setFilterGlCode(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
             />
+            <datalist id="entry-gl-codes">
+              {distinctGlAccounts.map((item) => (
+                <option key={item.glCode} value={item.glCode}>
+                  {item.glCode} ({item.glName})
+                </option>
+              ))}
+            </datalist>
           </div>
 
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정명</label>
             <input
               type="text"
-              placeholder="계정명..."
+              list="entry-gl-names"
+              placeholder="계정명 선택/입력..."
               value={filterGlName}
               onChange={(e) => setFilterGlName(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
             />
+            <datalist id="entry-gl-names">
+              {distinctGlNames.map((item) => (
+                <option key={`${item.glName}_${item.glCode}`} value={item.glName}>
+                  {item.glName} ({item.glCode})
+                </option>
+              ))}
+            </datalist>
           </div>
 
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">세목</label>
             <input
               type="text"
-              placeholder="세목..."
+              list="entry-sub-items"
+              placeholder="세목 선택/입력..."
               value={filterSubItem}
               onChange={(e) => setFilterSubItem(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
             />
+            <datalist id="entry-sub-items">
+              {distinctSubItems.map((sub) => (
+                <option key={sub} value={sub} />
+              ))}
+            </datalist>
           </div>
 
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">귀속</label>
-            <select
+            <input
+              type="text"
+              list="entry-attributions"
+              placeholder="귀속 선택/입력..."
               value={filterAttribution}
-              onChange={(e) => setFilterAttribution(e.target.value as any)}
+              onChange={(e) => setFilterAttribution(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
-            >
-              <option value="all">전체/공통/MTBE4/P3</option>
-              <option value="공통">공통</option>
-              <option value="MTBE4">MTBE4</option>
-              <option value="P3">P3</option>
-            </select>
+            />
+            <datalist id="entry-attributions">
+              {distinctAttributions.map((attr) => (
+                <option key={attr} value={attr} />
+              ))}
+            </datalist>
           </div>
 
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">주관부서</label>
-            <select
-              value={filterDept}
-              onChange={(e) => setFilterDept(e.target.value as any)}
+            <input
+              type="text"
+              list="entry-depts"
+              placeholder="부서 선택/입력..."
+              value={filterDept === 'all' ? '' : filterDept}
+              onChange={(e) => setFilterDept(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
-            >
-              <option value="all">전체 부서</option>
-              {DEPARTMENTS.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
+            />
+            <datalist id="entry-depts">
+              {distinctDepartments.map((dept) => (
+                <option key={dept} value={dept} />
               ))}
-            </select>
+            </datalist>
           </div>
 
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">담당자</label>
             <input
               type="text"
-              placeholder="담당자..."
+              list="entry-managers"
+              placeholder="담당자 선택/입력..."
               value={filterManager}
               onChange={(e) => setFilterManager(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
             />
+            <datalist id="entry-managers">
+              {distinctManagers.map((mgr) => (
+                <option key={mgr} value={mgr} />
+              ))}
+            </datalist>
           </div>
 
           <div>
@@ -723,7 +816,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
+              className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden cursor-pointer"
             >
               <option value="all">전체보기</option>
               <option value="entered">입력완료</option>
@@ -828,8 +921,14 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
                   return (
                     <tr key={master.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-3 font-semibold text-slate-900 font-mono text-xs">{master.glCode}</td>
-                      <td className="py-3 px-3 font-medium text-slate-800 text-xs">{master.glName}</td>
+                      <td className="py-2.5 px-3 font-semibold text-slate-900 font-mono text-xs">
+                        <div>{master.glCode}</div>
+                        <div className="text-[11px] font-normal text-slate-500 font-sans truncate max-w-[130px]" title={master.glName}>{master.glName}</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-medium text-slate-800 text-xs">
+                        <div>{master.glName}</div>
+                        <div className="text-[11px] font-mono text-slate-400">{master.glCode}</div>
+                      </td>
                       <td className="py-3 px-3 font-medium text-slate-800 text-xs">{master.subItem}</td>
                       <td className="py-3 px-3">
                         <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700">

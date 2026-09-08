@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Department, EntryData, MasterItem, Round, UserProfile } from '../types';
 import { DEPARTMENTS } from '../initialData';
 import { BarChart3 } from 'lucide-react';
@@ -15,16 +15,68 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
   
   const isDeptUser = currentUser.role === 'dept_user';
 
-  // Filters matching order: 주관부서 / GL계정 / GL계정명 / 세목 / 귀속 / 상태
+  // Filters matching order: GL계정 / GL계정명 / 세목 / 귀속 / 주관부서 / 담당자 / 차이금액 / 입력상태
   const [filterDept, setFilterDept] = useState<string>(isDeptUser ? currentUser.department : 'all');
   const [filterGlCode, setFilterGlCode] = useState<string>('');
   const [filterGlName, setFilterGlName] = useState<string>('');
   const [filterSubItem, setFilterSubItem] = useState<string>('');
-  const [filterAttribution, setFilterAttribution] = useState<string>('all');
+  const [filterAttribution, setFilterAttribution] = useState<string>('');
+  const [filterManager, setFilterManager] = useState<string>('');
+  const [filterMinDiff, setFilterMinDiff] = useState<string>('');
+  const [filterMaxDiff, setFilterMaxDiff] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('all'); // 'all' | 'entered' | 'empty'
 
   const effectiveDept = isDeptUser ? currentUser.department : filterDept;
   const currentRound = rounds.find((r) => r.id === selectedRoundId);
+
+  // Distinct DB options for filters with both code and name
+  const distinctGlAccounts = useMemo(() => {
+    const map = new Map<string, { glCode: string; glName: string }>();
+    masterItems.forEach((m) => {
+      if (m.glCode && !map.has(m.glCode)) {
+        map.set(m.glCode, { glCode: m.glCode, glName: m.glName || '' });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.glCode.localeCompare(b.glCode));
+  }, [masterItems]);
+
+  const distinctGlNames = useMemo(() => {
+    const map = new Map<string, { glCode: string; glName: string }>();
+    masterItems.forEach((m) => {
+      if (m.glName && !map.has(m.glName)) {
+        map.set(m.glName, { glCode: m.glCode || '', glName: m.glName });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.glName.localeCompare(b.glName));
+  }, [masterItems]);
+
+  const distinctSubItems = useMemo(() => {
+    return Array.from(new Set(masterItems.map((m) => m.subItem).filter(Boolean))).sort();
+  }, [masterItems]);
+
+  const distinctAttributions = useMemo(() => {
+    return Array.from(new Set(masterItems.map((m) => m.attribution).filter(Boolean))).sort();
+  }, [masterItems]);
+
+  const distinctDepartments = useMemo(() => {
+    return Array.from(new Set(masterItems.map((m) => m.dept).filter(Boolean))).sort();
+  }, [masterItems]);
+
+  const distinctManagers = useMemo(() => {
+    return Array.from(new Set(masterItems.map((m) => m.manager).filter(Boolean))).sort();
+  }, [masterItems]);
+
+  const handleResetFilters = () => {
+    setFilterGlCode('');
+    setFilterGlName('');
+    setFilterSubItem('');
+    setFilterAttribution('');
+    if (!isDeptUser) setFilterDept('all');
+    setFilterManager('');
+    setFilterMinDiff('');
+    setFilterMaxDiff('');
+    setFilterStatus('all');
+  };
 
   // Helper to get 5 target months for a round
   const getRoundMonths = (round: Round | undefined) => {
@@ -146,12 +198,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
     };
   });
 
+  // Sort department summary so incomplete departments appear on the left
+  const sortedDeptSummary = useMemo(() => {
+    return [...deptSummary].sort((a, b) => {
+      if (a.isComplete !== b.isComplete) {
+        return a.isComplete ? 1 : -1; // incomplete first
+      }
+      if (a.completionRate !== b.completionRate) {
+        return a.completionRate - b.completionRate; // lower completion rate first
+      }
+      return a.dept.localeCompare(b.dept);
+    });
+  }, [deptSummary]);
+
+  // Calculate overall completion metrics
+  const totalDepts = deptSummary.length;
+  const completedDepts = deptSummary.filter((d) => d.isComplete).length;
+  const totalManagersAll = deptSummary.reduce((acc, d) => acc + d.totalManagers, 0);
+  const completedManagersAll = deptSummary.reduce((acc, d) => acc + d.completedManagers, 0);
+  const isAllComplete = completedDepts === totalDepts && totalDepts > 0;
+
   const filteredMasterItems = masterItems.filter((m) => {
-    const matchesDept = effectiveDept === 'all' || m.dept === effectiveDept;
+    const matchesDept = !filterDept || filterDept === 'all' || (m.dept || '').toLowerCase().includes(filterDept.toLowerCase());
     const matchesGl = (m.glCode || '').toLowerCase().includes((filterGlCode || '').toLowerCase());
     const matchesGlName = (m.glName || '').toLowerCase().includes((filterGlName || '').toLowerCase());
     const matchesSub = (m.subItem || '').toLowerCase().includes((filterSubItem || '').toLowerCase());
-    const matchesAttr = filterAttribution === 'all' || m.attribution === filterAttribution;
+    const matchesAttr = !filterAttribution || filterAttribution === 'all' || (m.attribution || '').toLowerCase().includes(filterAttribution.toLowerCase());
+    const matchesManager = (m.manager || '').toLowerCase().includes((filterManager || '').toLowerCase());
 
     const entry = roundEntries.find((e) => e.masterId === m.id);
     const hasData = entry && (
@@ -166,34 +239,50 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
     if (filterStatus === 'entered') matchesStatus = !!hasData;
     if (filterStatus === 'empty') matchesStatus = !hasData;
 
-    return matchesDept && matchesGl && matchesGlName && matchesSub && matchesAttr && matchesStatus;
+    let matchesDiff = true;
+    if (filterMinDiff !== '' || filterMaxDiff !== '') {
+      const minD = filterMinDiff !== '' ? Number(filterMinDiff) : -Infinity;
+      const maxD = filterMaxDiff !== '' ? Number(filterMaxDiff) : Infinity;
+
+      const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+      let hasMatchingDiff = false;
+      [0, 1, 2, 3, 4].forEach((idx) => {
+        const mKey = monthKeys[idx];
+        const mNum = roundMonths[idx];
+        const curVal = entry?.[mKey];
+        const prevVal = getPrevMonthValue(m.id, mNum);
+        if (typeof curVal === 'number' && !isNaN(curVal) && prevVal !== null) {
+          const diff = curVal - prevVal;
+          if (diff >= minD && diff <= maxD) {
+            hasMatchingDiff = true;
+          }
+        }
+      });
+      matchesDiff = hasMatchingDiff;
+    }
+
+    return (
+      matchesDept &&
+      matchesGl &&
+      matchesGlName &&
+      matchesSub &&
+      matchesAttr &&
+      matchesManager &&
+      matchesStatus &&
+      matchesDiff
+    );
   });
 
   return (
     <div className="max-w-[98rem] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Top Banner & Round Selector */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <div className="flex items-center space-x-2 mb-1">
-            <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold bg-[#0F2D59] text-white tracking-wide">
-              LX MMA CORPORATE
-            </span>
-            <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-100 text-[#0F2D59]">
-              (백만원)
-            </span>
-          </div>
-          <h2 className="text-xl font-bold text-slate-900">전사 예산 집행 및 실적 비교 대시보드</h2>
-          <p className="text-sm text-slate-500">
-            회차별 실적 데이터 집계 현황 및 직전 회차({prevRound ? prevRound.name : '없음'}) 대비 변동 내역을 실시간으로 모니터링합니다.
-          </p>
-        </div>
-
-        <div className="flex items-center space-x-3 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
+      {/* Round Selector (Left-aligned) */}
+      <div className="flex items-center justify-start gap-4">
+        <div className="flex items-center space-x-3 bg-white px-3.5 py-2 rounded-xl border border-slate-200 shadow-xs">
           <span className="text-xs font-semibold text-slate-500">조회 회차:</span>
           <select
             value={selectedRoundId}
             onChange={(e) => setSelectedRoundId(e.target.value)}
-            className="text-xs font-bold text-[#0F2D59] bg-[#0F2D59]/10 px-2.5 py-1 rounded border border-[#0F2D59]/20 focus:outline-hidden"
+            className="text-xs font-bold text-[#0F2D59] bg-[#0F2D59]/10 px-2.5 py-1 rounded border border-[#0F2D59]/20 focus:outline-hidden cursor-pointer"
           >
             {rounds.map((r) => (
               <option key={r.id} value={r.id}>
@@ -204,56 +293,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
         </div>
       </div>
 
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 mb-1">선택 회차 상태</p>
-            <h3 className="text-base font-bold text-slate-900 mt-1">
-              {currentRound?.name} ({currentRound?.status === 'open' ? '진행중' : '마감됨'})
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">대상 기간: {getMonthName(0)} ~ {getMonthName(4)}</p>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0F2D59] flex items-center justify-center font-mono font-bold text-lg">
-            {currentRound?.month}M
-          </div>
-        </div>
 
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 mb-1">직전 비교 회차</p>
-            <h3 className="text-base font-bold text-slate-900 mt-1">
-              {prevRound ? prevRound.name : '비교 회차 없음'}
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">차이 분석 기준 회차</p>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center">
-            <BarChart3 className="w-6 h-6" />
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-slate-500 mb-1">권한 모드</p>
-            <h3 className="text-base font-bold text-slate-900 mt-1">
-              {isDeptUser ? `${currentUser.department} 전용 조회` : '전사 관리자 (전체 조회)'}
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">{currentUser.name} ({currentUser.role})</p>
-          </div>
-          <div className="w-12 h-12 rounded-xl bg-red-50 text-[#E50012] flex items-center justify-center">
-            <BarChart3 className="w-6 h-6" />
-          </div>
-        </div>
-      </div>
 
       {/* Department Breakdown Cards */}
       <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-        <h3 className="text-base font-bold text-slate-900 mb-1">
-          부서별 담당자 완료 현황 (전체 부서)
-        </h3>
-        <p className="text-xs text-slate-500 mb-4">각 부서별 담당자의 입력 완료 여부로 부서 완료 상태가 결정됩니다. (카드 클릭 시 해당 부서 필터)</p>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+          <div className="flex items-center space-x-3">
+            <h3 className="text-base font-bold text-slate-900">
+              부서별 완료현황
+            </h3>
+            <span
+              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                isAllComplete
+                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                  : 'bg-amber-100 text-amber-800 border border-amber-300'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${isAllComplete ? 'bg-emerald-600' : 'bg-amber-600'}`}></span>
+              {isAllComplete
+                ? `총 완료 (5개 부서 전원 완료)`
+                : `총 진행중 (완료 ${completedDepts}/${totalDepts}개 부서, 담당자 ${completedManagersAll}/${totalManagersAll}명)`}
+            </span>
+          </div>
+          <span className="text-xs text-slate-400">
+            * 미완료 부서가 왼쪽에 우선 배치됩니다.
+          </span>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          {deptSummary.map((ds) => {
+          {sortedDeptSummary.map((ds) => {
               return (
                 <div
                   key={ds.dept}
@@ -306,98 +374,183 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
 
       {/* Detailed Consolidated Table with Horizontal Scroll & Year Grouping Headers */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-6 border-b border-slate-200">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+        <div className="p-6 border-b border-slate-200 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <h3 className="text-base font-bold text-slate-900">
-              {isDeptUser ? `${currentUser.department} 상세 데이터 내역` : '상세 데이터 취합 및 차이 비교 내역'} ({filteredMasterItems.length}건)
+              비용추정 세부내역
             </h3>
             <span className="text-xs text-slate-500">
               * 직전 회차({prevRound ? prevRound.name : '없음'})와 금번 회차({currentRound?.name}) 비교 (단위: 백만원)
             </span>
           </div>
 
-          {/* Filters Bar matching order: 주관부서 / GL계정 / GL계정명 / 세목 / 귀속 / 상태 */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 pt-2 border-t border-slate-100">
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1">주관부서 필터</label>
-              {isDeptUser ? (
-                <div className="w-full text-xs bg-slate-100 text-slate-800 px-3 py-2 rounded-lg border border-slate-200 font-bold">
-                  {currentUser.department} (내 부서 전용)
-                </div>
-              ) : (
-                <select
-                  value={filterDept}
-                  onChange={(e) => setFilterDept(e.target.value)}
-                  className="w-full text-xs bg-slate-50 text-slate-800 px-3 py-2 rounded-lg border border-slate-200 focus:outline-hidden"
-                >
-                  <option value="all">전체 부서</option>
-                  {DEPARTMENTS.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
+          {/* Filters Bar with Datalists (직접입력 및 목록상자 선택 가능) */}
+          <div className="bg-slate-50/70 rounded-xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-xs font-bold text-slate-700">
+                검색 및 필터 조건 (직접입력 및 목록상자 선택 가능)
+              </span>
+              <div className="flex items-center space-x-3">
+                <span className="text-xs text-slate-400">총 {filteredMasterItems.length}개 항목</span>
+                {(filterGlCode || filterGlName || filterSubItem || filterAttribution || (filterDept !== 'all' && !isDeptUser) || filterManager || filterMinDiff !== '' || filterMaxDiff !== '' || filterStatus !== 'all') && (
+                  <button
+                    onClick={handleResetFilters}
+                    className="text-[11px] text-red-600 hover:text-red-700 font-semibold cursor-pointer underline"
+                  >
+                    필터 초기화
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정</label>
+                <input
+                  type="text"
+                  list="dash-gl-codes"
+                  placeholder="GL코드 선택/입력..."
+                  value={filterGlCode}
+                  onChange={(e) => setFilterGlCode(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden"
+                />
+                <datalist id="dash-gl-codes">
+                  {distinctGlAccounts.map((item) => (
+                    <option key={item.glCode} value={item.glCode}>
+                      {item.glCode} ({item.glName})
                     </option>
                   ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정명</label>
+                <input
+                  type="text"
+                  list="dash-gl-names"
+                  placeholder="계정명 선택/입력..."
+                  value={filterGlName}
+                  onChange={(e) => setFilterGlName(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden"
+                />
+                <datalist id="dash-gl-names">
+                  {distinctGlNames.map((item) => (
+                    <option key={`${item.glName}_${item.glCode}`} value={item.glName}>
+                      {item.glName} ({item.glCode})
+                    </option>
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">세목</label>
+                <input
+                  type="text"
+                  list="dash-sub-items"
+                  placeholder="세목 선택/입력..."
+                  value={filterSubItem}
+                  onChange={(e) => setFilterSubItem(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden"
+                />
+                <datalist id="dash-sub-items">
+                  {distinctSubItems.map((sub) => (
+                    <option key={sub} value={sub} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">귀속</label>
+                <input
+                  type="text"
+                  list="dash-attributions"
+                  placeholder="귀속 선택/입력..."
+                  value={filterAttribution}
+                  onChange={(e) => setFilterAttribution(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden"
+                />
+                <datalist id="dash-attributions">
+                  {distinctAttributions.map((attr) => (
+                    <option key={attr} value={attr} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">주관부서</label>
+                {isDeptUser ? (
+                  <div className="w-full text-xs bg-slate-100 text-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 font-bold truncate">
+                    {currentUser.department}
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      list="dash-depts"
+                      placeholder="부서 선택/입력..."
+                      value={filterDept === 'all' ? '' : filterDept}
+                      onChange={(e) => setFilterDept(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden"
+                    />
+                    <datalist id="dash-depts">
+                      {distinctDepartments.map((dept) => (
+                        <option key={dept} value={dept} />
+                      ))}
+                    </datalist>
+                  </>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">담당자</label>
+                <input
+                  type="text"
+                  list="dash-managers"
+                  placeholder="담당자 선택/입력..."
+                  value={filterManager}
+                  onChange={(e) => setFilterManager(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden"
+                />
+                <datalist id="dash-managers">
+                  {distinctManagers.map((mgr) => (
+                    <option key={mgr} value={mgr} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">차이금액 이상</label>
+                <input
+                  type="number"
+                  placeholder="최소 차이..."
+                  value={filterMinDiff}
+                  onChange={(e) => setFilterMinDiff(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">차이금액 이하</label>
+                <input
+                  type="number"
+                  placeholder="최대 차이..."
+                  value={filterMaxDiff}
+                  onChange={(e) => setFilterMaxDiff(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1">입력상태</label>
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden cursor-pointer"
+                >
+                  <option value="all">전체보기</option>
+                  <option value="entered">입력완료</option>
+                  <option value="empty">미입력</option>
                 </select>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정</label>
-              <input
-                type="text"
-                placeholder="GL코드..."
-                value={filterGlCode}
-                onChange={(e) => setFilterGlCode(e.target.value)}
-                className="w-full text-xs bg-slate-50 text-slate-800 px-3 py-2 rounded-lg border border-slate-200 focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정명</label>
-              <input
-                type="text"
-                placeholder="계정명..."
-                value={filterGlName}
-                onChange={(e) => setFilterGlName(e.target.value)}
-                className="w-full text-xs bg-slate-50 text-slate-800 px-3 py-2 rounded-lg border border-slate-200 focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1">세목</label>
-              <input
-                type="text"
-                placeholder="세목..."
-                value={filterSubItem}
-                onChange={(e) => setFilterSubItem(e.target.value)}
-                className="w-full text-xs bg-slate-50 text-slate-800 px-3 py-2 rounded-lg border border-slate-200 focus:outline-hidden"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1">귀속</label>
-              <select
-                value={filterAttribution}
-                onChange={(e) => setFilterAttribution(e.target.value)}
-                className="w-full text-xs bg-slate-50 text-slate-800 px-3 py-2 rounded-lg border border-slate-200 focus:outline-hidden"
-              >
-                <option value="all">전체/공통/MTBE4/P3</option>
-                <option value="공통">공통</option>
-                <option value="MTBE4">MTBE4</option>
-                <option value="P3">P3</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-600 mb-1">입력데이터</label>
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="w-full text-xs bg-slate-50 text-slate-800 px-3 py-2 rounded-lg border border-slate-200 focus:outline-hidden"
-              >
-                <option value="all">전체보기</option>
-                <option value="entered">입력완료</option>
-                <option value="empty">미입력</option>
-              </select>
+              </div>
             </div>
           </div>
         </div>
@@ -500,8 +653,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
 
                   return (
                     <tr key={master.id} className="hover:bg-slate-50/80 transition-colors font-sans">
-                      <td className="py-3 px-3 font-semibold text-slate-900 font-mono text-xs">{master.glCode}</td>
-                      <td className="py-3 px-3 font-medium text-slate-800 text-xs">{master.glName}</td>
+                      <td className="py-2.5 px-3 font-semibold text-slate-900 font-mono text-xs">
+                        <div>{master.glCode}</div>
+                        <div className="text-[11px] font-normal text-slate-500 font-sans truncate max-w-[130px]" title={master.glName}>{master.glName}</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-medium text-slate-800 text-xs">
+                        <div>{master.glName}</div>
+                        <div className="text-[11px] font-mono text-slate-400">{master.glCode}</div>
+                      </td>
                       <td className="py-3 px-3 font-medium text-slate-800 text-xs">{master.subItem}</td>
                       <td className="py-3 px-3">
                         <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700">
