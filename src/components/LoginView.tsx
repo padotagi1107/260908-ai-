@@ -14,7 +14,6 @@ import {
   Database,
   AlertCircle,
   CheckCircle2,
-  Settings,
   ChevronDown,
   ChevronUp,
   Eye,
@@ -22,28 +21,17 @@ import {
   Code2,
   Copy,
   Check,
-  UserPlus,
-  LogIn,
-  Building2,
-  User,
   HelpCircle,
   RefreshCw,
-  Sparkles,
 } from 'lucide-react';
-import { DEPARTMENTS } from '../initialData';
-import { Department } from '../types';
 
 interface LoginViewProps {
   onLoginSuccess: (userEmail: string, userName: string, role?: string, department?: string) => void;
 }
 
 export function LoginView({ onLoginSuccess }: LoginViewProps) {
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [department, setDepartment] = useState<Department>('노경');
-  const [role, setRole] = useState<'admin' | 'manager' | 'viewer'>('manager');
 
   const [loading, setLoading] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -188,81 +176,6 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
     }
   };
 
-  const handleSignUp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMessage('');
-    setSuccessMessage('');
-
-    if (!isSupabaseConfigured || !supabase) {
-      setErrorMessage('Supabase 연결 정보가 설정되지 않았습니다. 아래 [Supabase 연결 설정]에서 URL과 Key를 먼저 등록해주세요.');
-      setShowConfigSection(true);
-      return;
-    }
-
-    if (!email || !password || !name) {
-      setErrorMessage('이메일, 비밀번호, 이름을 모두 입력해주세요.');
-      return;
-    }
-
-    if (password.length < 6) {
-      setErrorMessage('비밀번호는 최소 6자리 이상이어야 합니다.');
-      return;
-    }
-
-    setLoading(true);
-    const cleanEmail = email.trim().toLowerCase();
-
-    try {
-      // 1. Supabase Auth 계정 생성
-      const { data, error } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password,
-        options: {
-          data: {
-            name: name.trim(),
-            department: department,
-            role: role,
-          },
-        },
-      });
-
-      if (error) throw error;
-
-      // 2. authorized_users 테이블 등록 시도
-      try {
-        await supabase.from('authorized_users').upsert(
-          {
-            email: cleanEmail,
-            name: name.trim(),
-            department: department,
-            role: role,
-          },
-          { onConflict: 'email' }
-        );
-      } catch (dbErr) {
-        console.warn('authorized_users insert note:', dbErr);
-      }
-
-      if (data?.session || data?.user) {
-        setSuccessMessage('계정이 성공적으로 등록되었습니다. 바로 시스템으로 연결됩니다.');
-        setTimeout(() => {
-          onLoginSuccess(cleanEmail, name.trim(), role, department);
-        }, 500);
-      } else {
-        setSuccessMessage('계정 생성이 요청되었습니다. Supabase에서 이메일 인증이 켜져 있는 경우 인증 후 로그인해주세요.');
-        setAuthMode('login');
-      }
-    } catch (err: any) {
-      setErrorMessage(formatAuthError(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickDemoLogin = () => {
-    onLoginSuccess('admin@lxmma.com', '시스템관리자 (데모)', 'admin', 'IT보안팀');
-  };
-
   const handleSaveConfig = (e: React.FormEvent) => {
     e.preventDefault();
     if (!dbUrl.trim() || !dbKey.trim()) {
@@ -396,8 +309,8 @@ on conflict (email) do nothing;`;
           <div className="inline-flex p-3 rounded-2xl bg-white/10 backdrop-blur-md mb-3 border border-white/20">
             <ShieldCheck className="w-8 h-8 text-emerald-400" />
           </div>
-          <h1 className="text-xl font-bold tracking-tight">LX MMA 예산·실적 통합 플랫폼</h1>
-          <p className="text-xs text-blue-200 mt-1">Supabase 연동 인증 및 데이터 관리 시스템</p>
+          <h1 className="text-xl font-bold tracking-tight">LXMMA 제조고정비 선행추정</h1>
+          <p className="text-xs text-blue-200 mt-1">부서별 제조고정비 취합 및 추정 관리 시스템</p>
 
           {/* Connection Status Badge */}
           <div className="mt-4 flex items-center justify-center space-x-2">
@@ -578,182 +491,47 @@ on conflict (email) do nothing;`;
             )}
           </div>
 
-          {/* 2. Login & Sign Up Tab Selection */}
-          <div className="flex border-b border-slate-200">
+          {/* 2. Login Form */}
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">이메일 계정 (ID)</label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="email"
+                  required
+                  placeholder="user@lxmma.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">비밀번호</label>
+              <div className="relative">
+                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="password"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
+                />
+              </div>
+            </div>
+
             <button
-              type="button"
-              onClick={() => {
-                setAuthMode('login');
-                setErrorMessage('');
-                setSuccessMessage('');
-              }}
-              className={`flex-1 py-2.5 text-xs font-bold border-b-2 flex items-center justify-center space-x-1.5 transition-colors ${
-                authMode === 'login'
-                  ? 'border-[#0F2D59] text-[#0F2D59]'
-                  : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}
+              type="submit"
+              disabled={loading}
+              className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-2 cursor-pointer"
             >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>로그인</span>
+              <Lock className="w-3.5 h-3.5" />
+              <span>{loading ? '인증 확인 중...' : '로그인 (Supabase Auth)'}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode('signup');
-                setErrorMessage('');
-                setSuccessMessage('');
-              }}
-              className={`flex-1 py-2.5 text-xs font-bold border-b-2 flex items-center justify-center space-x-1.5 transition-colors ${
-                authMode === 'signup'
-                  ? 'border-[#0F2D59] text-[#0F2D59]'
-                  : 'border-transparent text-slate-400 hover:text-slate-600'
-              }`}
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>신규 계정 등록</span>
-            </button>
-          </div>
-
-          {/* 3. Login or Sign Up Form */}
-          {authMode === 'login' ? (
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">이메일 계정</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="email"
-                    required
-                    placeholder="user@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">비밀번호</label>
-                <div className="relative">
-                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="password"
-                    required
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-2 cursor-pointer"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span>{loading ? '인증 확인 중...' : '로그인 (Supabase Auth)'}</span>
-              </button>
-            </form>
-          ) : (
-            <form onSubmit={handleSignUp} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">사용자 이름</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text"
-                    required
-                    placeholder="홍길동"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">이메일 계정</label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="email"
-                    required
-                    placeholder="user@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">비밀번호 (6자 이상)</label>
-                <div className="relative">
-                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="password"
-                    required
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">소속 부서</label>
-                  <select
-                    value={department}
-                    onChange={(e) => setDepartment(e.target.value as Department)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] text-slate-900 font-medium"
-                  >
-                    {DEPARTMENTS.map((d) => (
-                      <option key={d} value={d}>
-                        {d}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">권한 등급</label>
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value as any)}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] text-slate-900 font-medium"
-                  >
-                    <option value="manager">부서 담당자 (manager)</option>
-                    <option value="admin">총괄 관리자 (admin)</option>
-                    <option value="viewer">조회 전용 (viewer)</option>
-                  </select>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-3 cursor-pointer"
-              >
-                <UserPlus className="w-3.5 h-3.5" />
-                <span>{loading ? '계정 등록 중...' : '계정 등록 및 바로 로그인'}</span>
-              </button>
-            </form>
-          )}
-
-          {/* Quick Demo Login */}
-          <div className="pt-2 border-t border-slate-100">
-            <button
-              onClick={handleQuickDemoLogin}
-              className="w-full py-2.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium text-xs hover:bg-emerald-100 transition-colors flex items-center justify-center space-x-2 cursor-pointer"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>빠른 체험 로그인 (관리자 권한 데모)</span>
-            </button>
-          </div>
+          </form>
         </div>
       </div>
 
@@ -845,10 +623,10 @@ on conflict (email) do nothing;`;
               <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1.5">
                 <div className="font-bold text-emerald-900 flex items-center space-x-1.5">
                   <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px]">3</span>
-                  <span>웹 화면에서 [신규 계정 등록] 탭으로 등록</span>
+                  <span>Supabase 대시보드에서 신규 사용자 생성 및 인가</span>
                 </div>
                 <p className="text-[11px] text-emerald-800">
-                  현재 로그인 화면의 <b>[신규 계정 등록]</b> 탭에서 이름과 부서, 권한을 지정하여 등록하시면 자동으로 인가 테이블과 연동되어 등록 즉시 시스템에 접속할 수 있습니다.
+                  신규 계정은 Supabase 대시보드 <b>Authentication &gt; Users &gt; Add user &gt; Create user</b>에서 등록하거나 관리자 권한을 통해 등록할 수 있습니다.
                 </p>
               </div>
             </div>

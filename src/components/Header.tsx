@@ -1,11 +1,28 @@
 import React from 'react';
 import { ActiveTab, UserProfile } from '../types';
-import { Building2, Calendar, FileSpreadsheet, Lock, Settings, ShieldCheck, Users, BarChart3, Edit3, BookOpen, LogOut } from 'lucide-react';
+import {
+  Building2,
+  Calendar,
+  FileSpreadsheet,
+  Users,
+  BarChart3,
+  Edit3,
+  BookOpen,
+  LogOut,
+  ShieldCheck,
+  Eye,
+  RotateCcw,
+  UserCheck,
+} from 'lucide-react';
 
 interface HeaderProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   currentUser: UserProfile;
+  realAdminUser?: UserProfile;
+  isRealAdmin?: boolean;
+  users?: UserProfile[];
+  onSwitchUser?: (userId: string) => void;
   onLogout?: () => void;
 }
 
@@ -13,8 +30,14 @@ export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   currentUser,
+  realAdminUser,
+  isRealAdmin = false,
+  users = [],
+  onSwitchUser,
   onLogout,
 }) => {
+  const isSimulating = isRealAdmin && realAdminUser && currentUser.id !== realAdminUser.id;
+
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -26,14 +49,59 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-[#E50012] rounded-full border-2 border-white"></span>
             </div>
             <div>
-              <h1 className="text-lg font-bold text-slate-900 tracking-tight">LX MMA 사내 데이터 취합 플랫폼</h1>
-              <p className="text-xs text-slate-500">부서별 데이터 공유 및 회차 마감 통제 시스템</p>
+              <div className="flex items-center space-x-2">
+                <h1 className="text-lg font-bold text-slate-900 tracking-tight">LXMMA 제조고정비 선행추정</h1>
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-[#0F2D59] border border-blue-200">
+                  사내 통합 플랫폼
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* User Profile (Fixed for logged-in account) & Logout */}
+          {/* User Profile, Admin Switcher & Logout */}
           <div className="flex items-center space-x-3">
-            <div className="flex items-center bg-slate-50 rounded-xl px-3 py-1.5 border border-slate-200 space-x-2.5">
+            {/* System Admin User Switcher (Only visible to authenticated system admins) */}
+            {isRealAdmin && onSwitchUser && (
+              <div className="flex items-center space-x-2 bg-amber-50/80 border border-amber-200 rounded-xl px-2.5 py-1.5 shadow-2xs">
+                <div className="flex items-center space-x-1.5 text-amber-900 text-xs font-semibold">
+                  <Eye className="w-3.5 h-3.5 text-amber-700" />
+                  <span className="hidden sm:inline text-[11px]">사용자/권한 전환:</span>
+                </div>
+                <select
+                  value={currentUser.id}
+                  onChange={(e) => onSwitchUser(e.target.value)}
+                  className="text-xs font-bold bg-white text-slate-800 border border-amber-300 rounded-lg px-2 py-1 focus:outline-hidden focus:ring-2 focus:ring-amber-500 cursor-pointer"
+                >
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.role === 'operator'
+                        ? `👑 ${u.name} (총괄 운영자)`
+                        : `👤 ${u.name} [${u.department}]`}
+                    </option>
+                  ))}
+                </select>
+
+                {isSimulating && realAdminUser && (
+                  <button
+                    onClick={() => onSwitchUser(realAdminUser.id)}
+                    className="inline-flex items-center space-x-1 px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md text-[11px] font-bold transition-colors shadow-2xs cursor-pointer"
+                    title="원래 관리자 권한으로 즉시 복귀"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>관리자 복귀</span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Current Active Profile Badge */}
+            <div
+              className={`flex items-center rounded-xl px-3 py-1.5 border space-x-2.5 ${
+                isSimulating
+                  ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-400/30'
+                  : 'bg-slate-50 border-slate-200'
+              }`}
+            >
               <div
                 className={`w-7 h-7 rounded-lg flex items-center justify-center ${
                   currentUser.role === 'operator'
@@ -44,7 +112,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {currentUser.role === 'operator' ? (
                   <ShieldCheck className="w-4 h-4" />
                 ) : (
-                  <Users className="w-4 h-4" />
+                  <UserCheck className="w-4 h-4" />
                 )}
               </div>
 
@@ -60,6 +128,11 @@ export const Header: React.FC<HeaderProps> = ({
                   >
                     {currentUser.role === 'operator' ? '운영자' : `${currentUser.department} 담당자`}
                   </span>
+                  {isSimulating && (
+                    <span className="text-[9px] font-bold px-1 py-0.2 bg-amber-500 text-white rounded">
+                      시점 전환
+                    </span>
+                  )}
                 </div>
                 <span className="text-[10px] text-slate-400 font-mono leading-tight">
                   {currentUser.email}
@@ -71,20 +144,40 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={onLogout}
                 className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 transition-colors border border-slate-200 text-xs font-medium cursor-pointer"
-                title="로그아웃 (다른 사용자로 로그인하려면 로그아웃하세요)"
+                title="로그아웃"
               >
                 <LogOut className="w-3.5 h-3.5" />
-                <span>로그아웃</span>
+                <span className="hidden sm:inline">로그아웃</span>
               </button>
             )}
           </div>
         </div>
 
+        {/* Impersonation Banner Alert for Admins */}
+        {isSimulating && (
+          <div className="bg-amber-100/90 border border-amber-300 rounded-lg px-3 py-1.5 mb-2 flex items-center justify-between text-xs text-amber-900">
+            <div className="flex items-center space-x-2">
+              <Eye className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>
+                <b>[사용자 권한 화면 시뮬레이션 중]</b> 현재 <b>{currentUser.name} ({currentUser.department} 담당자)</b> 권한으로 화면을 확인하고 있습니다. 해당 부서의 입력 데이터만 수정 및 조회가 가능하며 관리자 전용 메뉴는 숨김 처리됩니다.
+              </span>
+            </div>
+            {realAdminUser && (
+              <button
+                onClick={() => onSwitchUser && onSwitchUser(realAdminUser.id)}
+                className="text-amber-800 underline font-bold hover:text-amber-950 shrink-0 ml-3 cursor-pointer"
+              >
+                관리자 화면으로 돌아가기
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Navigation Tabs */}
         <div className="flex space-x-1 overflow-x-auto pb-px border-t border-slate-100 pt-2">
           <button
             onClick={() => setActiveTab('dashboard')}
-            className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all ${
+            className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all cursor-pointer ${
               activeTab === 'dashboard'
                 ? 'bg-[#0F2D59]/10 text-[#0F2D59] border-b-2 border-[#0F2D59] font-semibold'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -96,7 +189,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={() => setActiveTab('entry')}
-            className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all ${
+            className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all cursor-pointer ${
               activeTab === 'entry'
                 ? 'bg-[#0F2D59]/10 text-[#0F2D59] border-b-2 border-[#0F2D59] font-semibold'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -110,7 +203,7 @@ export const Header: React.FC<HeaderProps> = ({
             <>
               <button
                 onClick={() => setActiveTab('gl_master')}
-                className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all ${
+                className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all cursor-pointer ${
                   activeTab === 'gl_master'
                     ? 'bg-amber-50 text-amber-700 border-b-2 border-amber-600 font-semibold'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -122,7 +215,7 @@ export const Header: React.FC<HeaderProps> = ({
 
               <button
                 onClick={() => setActiveTab('master')}
-                className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all ${
+                className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all cursor-pointer ${
                   activeTab === 'master'
                     ? 'bg-amber-50 text-amber-700 border-b-2 border-amber-600 font-semibold'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -134,7 +227,7 @@ export const Header: React.FC<HeaderProps> = ({
 
               <button
                 onClick={() => setActiveTab('rounds')}
-                className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all ${
+                className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all cursor-pointer ${
                   activeTab === 'rounds'
                     ? 'bg-amber-50 text-amber-700 border-b-2 border-amber-600 font-semibold'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -146,7 +239,7 @@ export const Header: React.FC<HeaderProps> = ({
 
               <button
                 onClick={() => setActiveTab('users')}
-                className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all ${
+                className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all cursor-pointer ${
                   activeTab === 'users'
                     ? 'bg-amber-50 text-amber-700 border-b-2 border-amber-600 font-semibold'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
@@ -162,3 +255,4 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
+

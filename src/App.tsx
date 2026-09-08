@@ -127,7 +127,43 @@ export function App() {
     localStorage.removeItem('company_platform_auth_email');
   };
 
-  const currentUser = users.find((u) => u.id === currentUserId) || users[0];
+  // 1. Identify the actual logged-in user from authEmail
+  const realAuthenticatedUser: UserProfile = users.find(
+    (u) => u.email.toLowerCase() === authEmail.toLowerCase()
+  ) || {
+    id: 'usr-op',
+    name: '총괄 운영자',
+    email: authEmail || 'operator@company.com',
+    role: 'operator',
+  };
+
+  // 2. Check if the actual logged-in user is a system administrator/operator
+  const isRealAdmin =
+    realAuthenticatedUser.role === 'operator' ||
+    authEmail.toLowerCase().includes('admin') ||
+    authEmail.toLowerCase().includes('operator');
+
+  // 3. For system admins, allow switching/simulating other users via currentUserId.
+  // For standard department users, strictly fix the user mode to their authenticated account.
+  const currentUser: UserProfile = isRealAdmin
+    ? users.find((u) => u.id === currentUserId) || realAuthenticatedUser
+    : realAuthenticatedUser;
+
+  // 4. Admin user switching handler
+  const handleSwitchUser = (userId: string) => {
+    if (!isRealAdmin) return;
+    const targetUser = users.find((u) => u.id === userId);
+    if (targetUser) {
+      setCurrentUserId(userId);
+      // If switching to a department user while on an operator-only tab, switch to entry tab
+      if (
+        targetUser.role !== 'operator' &&
+        ['gl_master', 'master', 'rounds', 'users'].includes(activeTab)
+      ) {
+        setActiveTab('entry');
+      }
+    }
+  };
 
   // If not authenticated via Supabase / Auth, render LoginView
   if (!isAuthenticated) {
@@ -241,6 +277,10 @@ export function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         currentUser={currentUser}
+        realAdminUser={realAuthenticatedUser}
+        isRealAdmin={isRealAdmin}
+        users={users}
+        onSwitchUser={isRealAdmin ? handleSwitchUser : undefined}
         onLogout={handleLogout}
       />
 
@@ -290,6 +330,7 @@ export function App() {
             onAddUser={handleAddUser}
             onUpdateUser={handleUpdateUser}
             onDeleteUser={handleDeleteUser}
+            onSwitchUser={isRealAdmin ? handleSwitchUser : undefined}
           />
         )}
       </main>

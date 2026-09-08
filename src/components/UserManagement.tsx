@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Department, UserProfile, UserRole } from '../types';
 import { DEPARTMENTS } from '../initialData';
-import { Users, ShieldCheck, Shield, Plus, Edit2, Trash2, X } from 'lucide-react';
+import { Users, ShieldCheck, Shield, Plus, Edit2, Trash2, X, Eye } from 'lucide-react';
 
 interface UserManagementProps {
   currentUser?: UserProfile;
@@ -9,6 +9,7 @@ interface UserManagementProps {
   onAddUser: (user: Omit<UserProfile, 'id'>) => void;
   onUpdateUser: (user: UserProfile) => void;
   onDeleteUser: (userId: string) => void;
+  onSwitchUser?: (userId: string) => void;
 }
 
 export const UserManagement: React.FC<UserManagementProps> = ({
@@ -17,6 +18,7 @@ export const UserManagement: React.FC<UserManagementProps> = ({
   onAddUser,
   onUpdateUser,
   onDeleteUser,
+  onSwitchUser,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
@@ -140,7 +142,21 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                       )}
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <div className="flex items-center justify-center space-x-2">
+                      <div className="flex items-center justify-center space-x-1.5">
+                        {onSwitchUser && (
+                          <button
+                            onClick={() => onSwitchUser(u.id)}
+                            className={`px-2 py-1 rounded text-xs font-semibold flex items-center space-x-1 transition-colors ${
+                              isCurrent
+                                ? 'bg-blue-100 text-[#0F2D59] cursor-default'
+                                : 'bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-800'
+                            }`}
+                            title={isCurrent ? '현재 접속 중인 사용자 시점입니다' : `${u.name} 시점 화면으로 전환`}
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>{isCurrent ? '현재 시점' : '시점 전환'}</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => handleOpenEdit(u)}
                           className="p-1 rounded hover:bg-slate-200 text-slate-600 transition-colors"
