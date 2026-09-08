@@ -26,6 +26,9 @@ import {
   LogIn,
   Building2,
   User,
+  HelpCircle,
+  RefreshCw,
+  Sparkles,
 } from 'lucide-react';
 import { DEPARTMENTS } from '../initialData';
 import { Department } from '../types';
@@ -43,8 +46,10 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
   const [role, setRole] = useState<'admin' | 'manager' | 'viewer'>('manager');
 
   const [loading, setLoading] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Supabase Configuration State
   const [config, setConfig] = useState(getSupabaseConfig());
@@ -53,6 +58,7 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
   const [showKey, setShowKey] = useState(false);
   const [showConfigSection, setShowConfigSection] = useState(!isSupabaseConfigured);
   const [showSqlModal, setShowSqlModal] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
 
   useEffect(() => {
@@ -61,6 +67,51 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
     setDbUrl(current.url);
     setDbKey(current.anonKey);
   }, []);
+
+  const formatAuthError = (err: any): string => {
+    const msg = (err?.message || '').toLowerCase();
+    if (msg.includes('invalid login credentials')) {
+      return '이메일 또는 비밀번호가 일치하지 않습니다. 대소문자 및 등록된 비밀번호를 다시 확인해주세요.';
+    }
+    if (msg.includes('email not confirmed')) {
+      return '이메일 인증이 완료되지 않은 계정입니다. Supabase 대시보드 [Authentication > Users]에서 해당 사용자를 클릭하고 [Confirm email]을 누르시거나, [Authentication > Providers > Email]에서 [Confirm email] 옵션을 꺼주세요.';
+    }
+    if (msg.includes('user already registered')) {
+      return '이미 가입된 이메일 계정입니다. 상단의 [로그인] 탭을 선택하여 비밀번호를 입력해주세요.';
+    }
+    if (msg.includes('password should be at least 6')) {
+      return '비밀번호는 최소 6자 이상이어야 합니다.';
+    }
+    if (msg.includes('network') || msg.includes('fetch') || msg.includes('failed to fetch')) {
+      return 'Supabase 서버에 연결할 수 없습니다. URL 및 인터넷 연결 상태를 확인해주세요.';
+    }
+    if (msg.includes('api key') || msg.includes('jwt')) {
+      return 'Supabase Anon Key(API 키)가 유효하지 않습니다. [Supabase 연결 설정]을 확인해주세요.';
+    }
+    return err?.message || '로그인 처리 중 오류가 발생했습니다.';
+  };
+
+  const handleTestConnection = async () => {
+    if (!dbUrl.trim() || !dbKey.trim()) {
+      setTestResult({ success: false, message: 'URL과 Key를 모두 입력해주세요.' });
+      return;
+    }
+    setTestingConnection(true);
+    setTestResult(null);
+    try {
+      if (!supabase) {
+        setTestResult({ success: false, message: 'Supabase 클라이언트가 초기화되지 않았습니다. 설정을 먼저 저장해주세요.' });
+        return;
+      }
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw error;
+      setTestResult({ success: true, message: 'Supabase 서버와 정상적으로 통신되었습니다.' });
+    } catch (err: any) {
+      setTestResult({ success: false, message: `연결 실패: ${err?.message || 'URL 또는 Key 확인 필요'}` });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,14 +141,14 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
 
       if (error) throw error;
 
-      if (data.user) {
+      if (data?.user) {
         let userName = data.user.user_metadata?.name || cleanEmail.split('@')[0];
         let userDept = data.user.user_metadata?.department || '노경';
         let userRole = cleanEmail.includes('admin') || cleanEmail.includes('operator') ? 'admin' : 'manager';
 
-        // 2. authorized_users 테이블 인가 여부 확인 (있으면 해당 정보 적용, 없으면 자동 인가 및 등록)
+        // 2. authorized_users 테이블 조회 및 동기화 (오류 발생 시에도 로그인은 통과)
         try {
-          const { data: authUser, error: authError } = await supabase
+          const { data: authUser } = await supabase
             .from('authorized_users')
             .select('*')
             .ilike('email', cleanEmail)
@@ -108,7 +159,7 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
             userDept = authUser.department || userDept;
             userRole = authUser.role || userRole;
           } else {
-            // 테이블에 아직 등록되어 있지 않은 경우, 자동으로 인가 등록 시도
+            // 테이블에 없을 시 자동 인가 등록 시도
             await supabase.from('authorized_users').upsert(
               {
                 email: cleanEmail,
@@ -120,17 +171,18 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
             );
           }
         } catch (dbErr) {
-          // DB 테이블 미생성 등의 경우에도 Supabase Auth 로그인은 허용
-          console.warn('authorized_users table check/upsert skipped:', dbErr);
+          console.warn('authorized_users sync note (non-blocking):', dbErr);
         }
 
-        setSuccessMessage(`로그인 성공: ${userName}님 환영합니다.`);
+        setSuccessMessage(`로그인 성공! [${userName}]님 환영합니다.`);
         setTimeout(() => {
           onLoginSuccess(cleanEmail, userName, userRole, userDept);
         }, 300);
+      } else {
+        throw new Error('사용자 인증 정보를 찾을 수 없습니다.');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || '로그인 중 오류가 발생했습니다. 이메일과 비밀번호를 확인해주세요.');
+      setErrorMessage(formatAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -176,7 +228,7 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
 
       if (error) throw error;
 
-      // 2. authorized_users 테이블에 사용자 정보 등록 시도
+      // 2. authorized_users 테이블 등록 시도
       try {
         await supabase.from('authorized_users').upsert(
           {
@@ -188,20 +240,20 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
           { onConflict: 'email' }
         );
       } catch (dbErr) {
-        console.warn('authorized_users table insert note:', dbErr);
+        console.warn('authorized_users insert note:', dbErr);
       }
 
-      if (data.session || data.user) {
-        setSuccessMessage('계정이 성공적으로 등록되었습니다. 바로 로그인됩니다.');
+      if (data?.session || data?.user) {
+        setSuccessMessage('계정이 성공적으로 등록되었습니다. 바로 시스템으로 연결됩니다.');
         setTimeout(() => {
           onLoginSuccess(cleanEmail, name.trim(), role, department);
         }, 500);
       } else {
-        setSuccessMessage('계정 등록이 완료되었습니다. (이메일 인증이 필요한 경우 메일함을 확인해주세요) 이제 로그인해주세요.');
+        setSuccessMessage('계정 생성이 요청되었습니다. Supabase에서 이메일 인증이 켜져 있는 경우 인증 후 로그인해주세요.');
         setAuthMode('login');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || '계정 등록 중 오류가 발생했습니다.');
+      setErrorMessage(formatAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -305,7 +357,7 @@ alter table public.rounds enable row level security;
 alter table public.entries enable row level security;
 alter table public.csv_uploads enable row level security;
 
--- 기본 RLS 정책 등록 (익명 및 인증 사용자 권한 허용)
+-- 모든 사용자 읽기/쓰기 허용 정책 (Anon 및 Authenticated)
 create policy "Allow all access to authorized_users"
   on public.authorized_users for all using (true) with check (true);
 
@@ -370,8 +422,11 @@ on conflict (email) do nothing;`;
           {/* Messages */}
           {errorMessage && (
             <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 flex items-start space-x-3 text-red-700 text-xs leading-relaxed">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              <div>{errorMessage}</div>
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-500" />
+              <div className="flex-1">
+                <div className="font-semibold text-red-800 mb-0.5">로그인 실패 안내</div>
+                <div>{errorMessage}</div>
+              </div>
             </div>
           )}
 
@@ -453,17 +508,54 @@ on conflict (email) do nothing;`;
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setShowSqlModal(true)}
-                      className="inline-flex items-center space-x-1 text-[11px] text-[#0F2D59] hover:underline font-medium"
+                  {testResult && (
+                    <div
+                      className={`p-2 rounded-lg text-[11px] font-medium flex items-center space-x-1.5 ${
+                        testResult.success
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : 'bg-red-50 text-red-700 border border-red-200'
+                      }`}
                     >
-                      <Code2 className="w-3.5 h-3.5" />
-                      <span>DB 테이블 SQL 가이드</span>
-                    </button>
+                      {testResult.success ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                      )}
+                      <span>{testResult.message}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowSqlModal(true)}
+                        className="inline-flex items-center space-x-1 text-[11px] text-[#0F2D59] hover:underline font-medium"
+                      >
+                        <Code2 className="w-3.5 h-3.5" />
+                        <span>SQL 가이드</span>
+                      </button>
+                      <span className="text-slate-300">|</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowHelpModal(true)}
+                        className="inline-flex items-center space-x-1 text-[11px] text-blue-600 hover:underline font-medium"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5" />
+                        <span>로그인 문제해결</span>
+                      </button>
+                    </div>
 
                     <div className="flex items-center space-x-2">
+                      <button
+                        type="button"
+                        onClick={handleTestConnection}
+                        disabled={testingConnection}
+                        className="px-2.5 py-1.5 text-[11px] text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg font-medium transition-colors flex items-center space-x-1"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${testingConnection ? 'animate-spin' : ''}`} />
+                        <span>연결 테스트</span>
+                      </button>
                       {isSupabaseConfigured && (
                         <button
                           type="button"
@@ -477,7 +569,7 @@ on conflict (email) do nothing;`;
                         type="submit"
                         className="px-3.5 py-1.5 text-[11px] font-semibold text-white bg-[#0F2D59] hover:bg-[#1B365D] rounded-lg shadow-xs transition-all"
                       >
-                        설정 저장 및 적용
+                        설정 저장
                       </button>
                     </div>
                   </div>
@@ -532,7 +624,7 @@ on conflict (email) do nothing;`;
                   <input
                     type="email"
                     required
-                    placeholder="example@lxmma.com"
+                    placeholder="user@example.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
@@ -558,7 +650,7 @@ on conflict (email) do nothing;`;
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-2"
+                className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-2 cursor-pointer"
               >
                 <Lock className="w-3.5 h-3.5" />
                 <span>{loading ? '인증 확인 중...' : '로그인 (Supabase Auth)'}</span>
@@ -588,7 +680,7 @@ on conflict (email) do nothing;`;
                   <input
                     type="email"
                     required
-                    placeholder="user@company.com"
+                    placeholder="user@example.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
@@ -644,10 +736,10 @@ on conflict (email) do nothing;`;
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-3"
+                className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-3 cursor-pointer"
               >
                 <UserPlus className="w-3.5 h-3.5" />
-                <span>{loading ? '계정 등록 중...' : '계정 등록 및 인가 완료'}</span>
+                <span>{loading ? '계정 등록 중...' : '계정 등록 및 바로 로그인'}</span>
               </button>
             </form>
           )}
@@ -656,7 +748,7 @@ on conflict (email) do nothing;`;
           <div className="pt-2 border-t border-slate-100">
             <button
               onClick={handleQuickDemoLogin}
-              className="w-full py-2.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium text-xs hover:bg-emerald-100 transition-colors flex items-center justify-center space-x-2"
+              className="w-full py-2.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium text-xs hover:bg-emerald-100 transition-colors flex items-center justify-center space-x-2 cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>빠른 체험 로그인 (관리자 권한 데모)</span>
@@ -702,6 +794,69 @@ on conflict (email) do nothing;`;
               <button
                 type="button"
                 onClick={() => setShowSqlModal(false)}
+                className="px-4 py-2 text-xs font-semibold text-white bg-[#0F2D59] rounded-lg hover:bg-[#1B365D]"
+              >
+                확인 완료
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Troubleshooting Modal */}
+      {showHelpModal && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div className="flex items-center space-x-2 text-[#0F2D59]">
+                <HelpCircle className="w-5 h-5 text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-900">Supabase 계정 로그인 문제 해결 가이드</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-xs px-2 py-1"
+              >
+                닫기
+              </button>
+            </div>
+
+            <div className="overflow-y-auto py-3 space-y-4 text-xs text-slate-600 leading-relaxed">
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl space-y-1.5">
+                <div className="font-bold text-blue-900 flex items-center space-x-1.5">
+                  <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">1</span>
+                  <span>Supabase 이메일 인증(Confirm Email) 옵션 확인</span>
+                </div>
+                <p className="text-[11px] text-blue-800">
+                  Supabase 대시보드에서 <b>Authentication &gt; Providers &gt; Email</b> 메뉴로 이동하여 <b>"Confirm email"</b> 옵션이 켜져 있는지 확인하세요. 이 옵션이 켜져 있으면 이메일 인증 링크를 클릭하기 전까지 로그인이 차단됩니다. 개발/내부용인 경우 이 옵션을 <b>OFF</b>로 꺼주시면 즉시 로그인이 가능합니다.
+                </p>
+              </div>
+
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-1.5">
+                <div className="font-bold text-amber-900 flex items-center space-x-1.5">
+                  <span className="w-5 h-5 rounded-full bg-amber-600 text-white flex items-center justify-center text-[10px]">2</span>
+                  <span>기존 생성한 사용자의 이메일 강제 인증 (Confirm User)</span>
+                </div>
+                <p className="text-[11px] text-amber-800">
+                  Supabase 대시보드 <b>Authentication &gt; Users</b> 목록에서 해당 사용자의 우측 점 세 개(...)를 누르고 <b>"Auto Confirm User"</b> 또는 <b>"Confirm Email"</b>을 선택하시면 즉시 인증 완료 상태로 전환됩니다.
+                </p>
+              </div>
+
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1.5">
+                <div className="font-bold text-emerald-900 flex items-center space-x-1.5">
+                  <span className="w-5 h-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px]">3</span>
+                  <span>웹 화면에서 [신규 계정 등록] 탭으로 등록</span>
+                </div>
+                <p className="text-[11px] text-emerald-800">
+                  현재 로그인 화면의 <b>[신규 계정 등록]</b> 탭에서 이름과 부서, 권한을 지정하여 등록하시면 자동으로 인가 테이블과 연동되어 등록 즉시 시스템에 접속할 수 있습니다.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(false)}
                 className="px-4 py-2 text-xs font-semibold text-white bg-[#0F2D59] rounded-lg hover:bg-[#1B365D]"
               >
                 확인 완료
