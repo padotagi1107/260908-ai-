@@ -22,15 +22,26 @@ import {
   Code2,
   Copy,
   Check,
+  UserPlus,
+  LogIn,
+  Building2,
+  User,
 } from 'lucide-react';
+import { DEPARTMENTS } from '../initialData';
+import { Department } from '../types';
 
 interface LoginViewProps {
-  onLoginSuccess: (userEmail: string, userName: string) => void;
+  onLoginSuccess: (userEmail: string, userName: string, role?: string, department?: string) => void;
 }
 
 export function LoginView({ onLoginSuccess }: LoginViewProps) {
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [department, setDepartment] = useState<Department>('노경');
+  const [role, setRole] = useState<'admin' | 'manager' | 'viewer'>('manager');
+
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -68,40 +79,136 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
     }
 
     setLoading(true);
+    const cleanEmail = email.trim().toLowerCase();
+
     try {
       // 1. Supabase Auth 로그인 요청
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
+        email: cleanEmail,
         password,
       });
 
       if (error) throw error;
 
       if (data.user) {
-        // 2. authorized_users 테이블 인가 여부 확인
-        const { data: authUser, error: authError } = await supabase
-          .from('authorized_users')
-          .select('*')
-          .eq('email', email.trim())
-          .single();
+        let userName = data.user.user_metadata?.name || cleanEmail.split('@')[0];
+        let userDept = data.user.user_metadata?.department || '노경';
+        let userRole = cleanEmail.includes('admin') || cleanEmail.includes('operator') ? 'admin' : 'manager';
 
-        if (authError || !authUser) {
-          // 인가되지 않은 경우
-          await supabase.auth.signOut();
-          throw new Error('인가된 사용자 목록에 등록되지 않은 계정입니다. 시스템 관리자에게 문의하세요.');
+        // 2. authorized_users 테이블 인가 여부 확인 (있으면 해당 정보 적용, 없으면 자동 인가 및 등록)
+        try {
+          const { data: authUser, error: authError } = await supabase
+            .from('authorized_users')
+            .select('*')
+            .ilike('email', cleanEmail)
+            .maybeSingle();
+
+          if (authUser) {
+            userName = authUser.name || userName;
+            userDept = authUser.department || userDept;
+            userRole = authUser.role || userRole;
+          } else {
+            // 테이블에 아직 등록되어 있지 않은 경우, 자동으로 인가 등록 시도
+            await supabase.from('authorized_users').upsert(
+              {
+                email: cleanEmail,
+                name: userName,
+                department: userDept,
+                role: userRole,
+              },
+              { onConflict: 'email' }
+            );
+          }
+        } catch (dbErr) {
+          // DB 테이블 미생성 등의 경우에도 Supabase Auth 로그인은 허용
+          console.warn('authorized_users table check/upsert skipped:', dbErr);
         }
 
-        onLoginSuccess(authUser.email, authUser.name || '사용자');
+        setSuccessMessage(`로그인 성공: ${userName}님 환영합니다.`);
+        setTimeout(() => {
+          onLoginSuccess(cleanEmail, userName, userRole, userDept);
+        }, 300);
       }
     } catch (err: any) {
-      setErrorMessage(err.message || '로그인 중 오류가 발생했습니다.');
+      setErrorMessage(err.message || '로그인 중 오류가 발생했습니다. 이메일과 비밀번호를 확인해주세요.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    if (!isSupabaseConfigured || !supabase) {
+      setErrorMessage('Supabase 연결 정보가 설정되지 않았습니다. 아래 [Supabase 연결 설정]에서 URL과 Key를 먼저 등록해주세요.');
+      setShowConfigSection(true);
+      return;
+    }
+
+    if (!email || !password || !name) {
+      setErrorMessage('이메일, 비밀번호, 이름을 모두 입력해주세요.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMessage('비밀번호는 최소 6자리 이상이어야 합니다.');
+      return;
+    }
+
+    setLoading(true);
+    const cleanEmail = email.trim().toLowerCase();
+
+    try {
+      // 1. Supabase Auth 계정 생성
+      const { data, error } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password,
+        options: {
+          data: {
+            name: name.trim(),
+            department: department,
+            role: role,
+          },
+        },
+      });
+
+      if (error) throw error;
+
+      // 2. authorized_users 테이블에 사용자 정보 등록 시도
+      try {
+        await supabase.from('authorized_users').upsert(
+          {
+            email: cleanEmail,
+            name: name.trim(),
+            department: department,
+            role: role,
+          },
+          { onConflict: 'email' }
+        );
+      } catch (dbErr) {
+        console.warn('authorized_users table insert note:', dbErr);
+      }
+
+      if (data.session || data.user) {
+        setSuccessMessage('계정이 성공적으로 등록되었습니다. 바로 로그인됩니다.');
+        setTimeout(() => {
+          onLoginSuccess(cleanEmail, name.trim(), role, department);
+        }, 500);
+      } else {
+        setSuccessMessage('계정 등록이 완료되었습니다. (이메일 인증이 필요한 경우 메일함을 확인해주세요) 이제 로그인해주세요.');
+        setAuthMode('login');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || '계정 등록 중 오류가 발생했습니다.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleQuickDemoLogin = () => {
-    onLoginSuccess('admin@lxmma.com', '시스템관리자 (데모)');
+    onLoginSuccess('admin@lxmma.com', '시스템관리자 (데모)', 'admin', 'IT보안팀');
   };
 
   const handleSaveConfig = (e: React.FormEvent) => {
@@ -198,24 +305,24 @@ alter table public.rounds enable row level security;
 alter table public.entries enable row level security;
 alter table public.csv_uploads enable row level security;
 
--- 기본 RLS 정책 등록
-create policy "Allow authenticated users access to authorized_users"
-  on public.authorized_users for all to authenticated using (true) with check (true);
+-- 기본 RLS 정책 등록 (익명 및 인증 사용자 권한 허용)
+create policy "Allow all access to authorized_users"
+  on public.authorized_users for all using (true) with check (true);
 
-create policy "Allow authenticated users access to master_items"
-  on public.master_items for all to authenticated using (true) with check (true);
+create policy "Allow all access to master_items"
+  on public.master_items for all using (true) with check (true);
 
-create policy "Allow authenticated users access to gl_master_items"
-  on public.gl_master_items for all to authenticated using (true) with check (true);
+create policy "Allow all access to gl_master_items"
+  on public.gl_master_items for all using (true) with check (true);
 
-create policy "Allow authenticated users access to rounds"
-  on public.rounds for all to authenticated using (true) with check (true);
+create policy "Allow all access to rounds"
+  on public.rounds for all using (true) with check (true);
 
-create policy "Allow authenticated users access to entries"
-  on public.entries for all to authenticated using (true) with check (true);
+create policy "Allow all access to entries"
+  on public.entries for all using (true) with check (true);
 
-create policy "Allow authenticated users access to csv_uploads"
-  on public.csv_uploads for all to authenticated using (true) with check (true);
+create policy "Allow all access to csv_uploads"
+  on public.csv_uploads for all using (true) with check (true);
 
 -- 초기 관리자 계정 인가 등록
 insert into public.authorized_users (email, name, department, role)
@@ -238,7 +345,7 @@ on conflict (email) do nothing;`;
             <ShieldCheck className="w-8 h-8 text-emerald-400" />
           </div>
           <h1 className="text-xl font-bold tracking-tight">LX MMA 예산·실적 통합 플랫폼</h1>
-          <p className="text-xs text-blue-200 mt-1">Supabase 기반 인가 사용자 인증 & 데이터 관리</p>
+          <p className="text-xs text-blue-200 mt-1">Supabase 연동 인증 및 데이터 관리 시스템</p>
 
           {/* Connection Status Badge */}
           <div className="mt-4 flex items-center justify-center space-x-2">
@@ -259,7 +366,7 @@ on conflict (email) do nothing;`;
           </div>
         </div>
 
-        <div className="p-7 space-y-6">
+        <div className="p-7 space-y-5">
           {/* Messages */}
           {errorMessage && (
             <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 flex items-start space-x-3 text-red-700 text-xs leading-relaxed">
@@ -269,7 +376,7 @@ on conflict (email) do nothing;`;
           )}
 
           {successMessage && (
-            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-start space-x-3 text-emerald-700 text-xs">
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 flex items-start space-x-3 text-emerald-700 text-xs leading-relaxed">
               <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
               <div>{successMessage}</div>
             </div>
@@ -292,7 +399,7 @@ on conflict (email) do nothing;`;
                       : 'bg-amber-100 text-amber-700'
                   }`}
                 >
-                  {isSupabaseConfigured ? '설정됨' : '미설정'}
+                  {isSupabaseConfigured ? '연동됨' : '미설정'}
                 </span>
               </div>
               {showConfigSection ? (
@@ -305,7 +412,7 @@ on conflict (email) do nothing;`;
             {showConfigSection && (
               <div className="px-4 pb-4 pt-2 border-t border-slate-200 bg-white">
                 <p className="text-[11px] text-slate-500 mb-3">
-                  Supabase Project Settings &gt; API에서 확인 가능한 Project URL과 anon public key를 등록하세요.
+                  Supabase 대시보드의 Project Settings &gt; API에서 확인 가능한 Project URL과 anon public key를 등록하세요.
                 </p>
 
                 <form onSubmit={handleSaveConfig} className="space-y-3">
@@ -379,52 +486,171 @@ on conflict (email) do nothing;`;
             )}
           </div>
 
-          {/* 2. Login Form */}
-          <form onSubmit={handleLogin} className="space-y-4 pt-1">
-            <div className="text-xs font-bold text-slate-800 flex items-center space-x-1.5 pb-1">
-              <Lock className="w-3.5 h-3.5 text-[#0F2D59]" />
-              <span>사용자 로그인</span>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">이메일 계정</label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="email"
-                  required
-                  placeholder="admin@lxmma.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">비밀번호</label>
-              <div className="relative">
-                <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
-                />
-              </div>
-            </div>
-
+          {/* 2. Login & Sign Up Tab Selection */}
+          <div className="flex border-b border-slate-200">
             <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-2"
+              type="button"
+              onClick={() => {
+                setAuthMode('login');
+                setErrorMessage('');
+                setSuccessMessage('');
+              }}
+              className={`flex-1 py-2.5 text-xs font-bold border-b-2 flex items-center justify-center space-x-1.5 transition-colors ${
+                authMode === 'login'
+                  ? 'border-[#0F2D59] text-[#0F2D59]'
+                  : 'border-transparent text-slate-400 hover:text-slate-600'
+              }`}
             >
-              <Lock className="w-3.5 h-3.5" />
-              <span>{loading ? '인증 확인 중...' : '로그인 (Supabase Auth)'}</span>
+              <LogIn className="w-3.5 h-3.5" />
+              <span>로그인</span>
             </button>
-          </form>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('signup');
+                setErrorMessage('');
+                setSuccessMessage('');
+              }}
+              className={`flex-1 py-2.5 text-xs font-bold border-b-2 flex items-center justify-center space-x-1.5 transition-colors ${
+                authMode === 'signup'
+                  ? 'border-[#0F2D59] text-[#0F2D59]'
+                  : 'border-transparent text-slate-400 hover:text-slate-600'
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>신규 계정 등록</span>
+            </button>
+          </div>
+
+          {/* 3. Login or Sign Up Form */}
+          {authMode === 'login' ? (
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">이메일 계정</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="email"
+                    required
+                    placeholder="example@lxmma.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">비밀번호</label>
+                <div className="relative">
+                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-2"
+              >
+                <Lock className="w-3.5 h-3.5" />
+                <span>{loading ? '인증 확인 중...' : '로그인 (Supabase Auth)'}</span>
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleSignUp} className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">사용자 이름</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    placeholder="홍길동"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">이메일 계정</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="email"
+                    required
+                    placeholder="user@company.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">비밀번호 (6자 이상)</label>
+                <div className="relative">
+                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="password"
+                    required
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white transition-all text-slate-900"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">소속 부서</label>
+                  <select
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value as Department)}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] text-slate-900 font-medium"
+                  >
+                    {DEPARTMENTS.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">권한 등급</label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value as any)}
+                    className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] text-slate-900 font-medium"
+                  >
+                    <option value="manager">부서 담당자 (manager)</option>
+                    <option value="admin">총괄 관리자 (admin)</option>
+                    <option value="viewer">조회 전용 (viewer)</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-2.5 rounded-xl bg-[#0F2D59] text-white font-semibold text-xs hover:bg-[#1B365D] shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50 mt-3"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>{loading ? '계정 등록 중...' : '계정 등록 및 인가 완료'}</span>
+              </button>
+            </form>
+          )}
 
           {/* Quick Demo Login */}
           <div className="pt-2 border-t border-slate-100">

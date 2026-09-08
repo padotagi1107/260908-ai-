@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ActiveTab, EntryData, MasterItem, GLMasterItem, Round, UserProfile } from './types';
+import { ActiveTab, EntryData, MasterItem, GLMasterItem, Round, UserProfile, Department } from './types';
 import { INITIAL_MASTER_ITEMS, INITIAL_GL_MASTER_ITEMS, INITIAL_ROUNDS, INITIAL_USERS } from './initialData';
 import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
@@ -83,11 +83,32 @@ export function App() {
     localStorage.setItem('company_platform_entries', JSON.stringify(entries));
   }, [entries]);
 
-  const handleLoginSuccess = (email: string, name: string) => {
+  const handleLoginSuccess = (email: string, name: string, role?: string, department?: string) => {
     setIsAuthenticated(true);
     setAuthEmail(email);
     localStorage.setItem('company_platform_auth', 'true');
     localStorage.setItem('company_platform_auth_email', email);
+
+    // Sync with users list
+    const existing = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    if (existing) {
+      setCurrentUserId(existing.id);
+    } else {
+      const isOperator =
+        role === 'admin' ||
+        role === 'operator' ||
+        email.toLowerCase().includes('admin') ||
+        email.toLowerCase().includes('operator');
+      const newUser: UserProfile = {
+        id: `usr-${Date.now()}`,
+        name: name || email.split('@')[0],
+        email: email,
+        role: isOperator ? 'operator' : 'dept_user',
+        department: isOperator ? undefined : (department as Department) || '노경',
+      };
+      setUsers((prev) => [...prev, newUser]);
+      setCurrentUserId(newUser.id);
+    }
   };
 
   const handleLogout = () => {
