@@ -22,6 +22,7 @@ export interface Round {
 
 export interface MasterItem {
   id: string;
+  keyNo?: number; // 고유KEY (숫자)
   glCode: string; // GL계정
   glName: string; // GL계정명
   subItem: string; // 세목

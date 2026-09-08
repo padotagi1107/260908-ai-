@@ -24,6 +24,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<MasterItem | null>(null);
 
+  const [keyNo, setKeyNo] = useState<number | ''>('');
   const [glCode, setGlCode] = useState('');
   const [glName, setGlName] = useState('');
   const [subItem, setSubItem] = useState('');
@@ -49,6 +50,8 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
 
   const handleOpenAdd = () => {
     setEditingItem(null);
+    const maxKey = masterItems.reduce((max, item, idx) => Math.max(max, item.keyNo ?? (idx + 1)), 0);
+    setKeyNo(maxKey + 1);
     setGlCode('');
     setGlName('');
     setSubItem('');
@@ -60,6 +63,8 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
 
   const handleOpenEdit = (item: MasterItem) => {
     setEditingItem(item);
+    const itemIdx = masterItems.findIndex((m) => m.id === item.id);
+    setKeyNo(item.keyNo ?? (itemIdx >= 0 ? itemIdx + 1 : 1));
     setGlCode(item.glCode);
     setGlName(item.glName);
     setSubItem(item.subItem);
@@ -71,6 +76,11 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const parsedKey = typeof keyNo === 'number' ? keyNo : parseInt(String(keyNo), 10);
+    if (isNaN(parsedKey) || parsedKey <= 0) {
+      alert('고유KEY는 1 이상의 숫자(DATA)로 입력해주세요.');
+      return;
+    }
     if (!glCode || !glName || !subItem || !attribution || !manager) {
       alert('모든 필드를 입력해주세요.');
       return;
@@ -79,6 +89,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
     if (editingItem) {
       onUpdateMasterItem({
         ...editingItem,
+        keyNo: parsedKey,
         glCode,
         glName,
         subItem,
@@ -88,6 +99,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
       });
     } else {
       onAddMasterItem({
+        keyNo: parsedKey,
         glCode,
         glName,
         subItem,
@@ -115,7 +127,18 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
         const data = XLSX.utils.sheet_to_json<any>(ws);
 
         let addedCount = 0;
+        let runningKey = masterItems.reduce((max, item, idx) => Math.max(max, item.keyNo ?? (idx + 1)), 0);
+
         data.forEach((row) => {
+          const rawKey = row['고유KEY'] ?? row['고유Key'] ?? row['고유key'] ?? row['고유KEY번호'] ?? row['KEY'] ?? row['keyNo'];
+          let itemKeyNo: number;
+          if (rawKey !== undefined && rawKey !== null && !isNaN(Number(String(rawKey).replace(/[^0-9]/g, '')))) {
+            const numVal = Number(String(rawKey).replace(/[^0-9]/g, ''));
+            itemKeyNo = numVal > 0 ? numVal : ++runningKey;
+          } else {
+            itemKeyNo = ++runningKey;
+          }
+
           let glCode = String(row['GL계정'] || row['glCode'] || row['GL코드'] || '');
           let glName = String(row['GL계정명'] || row['glName'] || '');
 
@@ -135,6 +158,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
 
           if (glCode && subItem) {
             onAddMasterItem({
+              keyNo: itemKeyNo,
               glCode,
               glName,
               subItem,
@@ -159,9 +183,9 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
 
   const handleDownloadTemplate = () => {
     const templateData = [
-      { GL계정: '51101000', GL계정명: '급여', 세목: '기본급 및 수당', 귀속: '공통', 주관부서: '노경', 담당자: '홍길동' },
-      { GL계정: '52201000', GL계정명: '소모품비', 세목: '보호구 및 안전용품', 귀속: 'MTBE4', 주관부서: '환경안전', 담당자: '김철수' },
-      { GL계정: '53301000', GL계정명: '지급수수료', 세목: '보안 S/W 라이선스', 귀속: '공통', 주관부서: 'IT보안팀', 담당자: '박민수' },
+      { 고유KEY: 1, GL계정: '51101000', GL계정명: '급여', 세목: '기본급 및 수당', 귀속: '공통', 주관부서: '노경', 담당자: '홍길동' },
+      { 고유KEY: 2, GL계정: '52201000', GL계정명: '소모품비', 세목: '보호구 및 안전용품', 귀속: 'MTBE4', 주관부서: '환경안전', 담당자: '김철수' },
+      { 고유KEY: 3, GL계정: '53301000', GL계정명: '지급수수료', 세목: '보안 S/W 라이선스', 귀속: '공통', 주관부서: 'IT보안팀', 담당자: '박민수' },
     ];
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
@@ -169,8 +193,10 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
     XLSX.writeFile(wb, '마스터_등록_양식.xlsx');
   };
 
-  const filteredItems = masterItems.filter((item) => {
+  const filteredItems = masterItems.filter((item, index) => {
+    const keyStr = String(item.keyNo ?? (index + 1));
     const matchesSearch =
+      keyStr.includes(searchTerm) ||
       (item.glCode || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
       (item.glName || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
       (item.subItem || '').toLowerCase().includes((searchTerm || '').toLowerCase()) ||
@@ -271,7 +297,7 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                <th className="py-3 px-4">고유 KEY 번호</th>
+                <th className="py-3 px-4 w-24">고유KEY</th>
                 <th className="py-3 px-4">GL계정</th>
                 <th className="py-3 px-4">GL계정명</th>
                 <th className="py-3 px-4">세목</th>
@@ -291,8 +317,8 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
               ) : (
                 filteredItems.map((item, index) => (
                   <tr key={item.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3 px-4 font-mono text-xs text-slate-500">
-                      KEY-{String(index + 1).padStart(3, '0')}
+                    <td className="py-3 px-4 font-mono font-bold text-xs text-slate-800">
+                      {item.keyNo ?? (index + 1)}
                     </td>
                     <td className="py-3 px-4 font-mono font-semibold text-slate-900">{item.glCode}</td>
                     <td className="py-3 px-4 font-semibold text-slate-800">{item.glName}</td>
@@ -355,6 +381,21 @@ export const MasterManagement: React.FC<MasterManagementProps> = ({
             </div>
 
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">고유KEY (숫자만 입력)</label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  step={1}
+                  placeholder="예: 1"
+                  value={keyNo}
+                  onChange={(e) => setKeyNo(e.target.value ? parseInt(e.target.value, 10) : '')}
+                  className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] focus:bg-white font-mono font-semibold"
+                  required
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">GL계정 (코드)</label>

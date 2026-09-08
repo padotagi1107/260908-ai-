@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Department, EntryData, MasterItem, Round, UserProfile } from '../types';
 import { DEPARTMENTS } from '../initialData';
-import { Lock, Unlock, Save } from 'lucide-react';
+import { Lock, Unlock, Save, FileSpreadsheet, Upload } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface DataEntryViewProps {
   currentUser: UserProfile;
@@ -549,62 +550,302 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     alert('저장되었습니다.');
   };
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExcelDownload = () => {
+    if (!currentRound) return;
+
+    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+
+    const exportData = filteredMasterItems.map((master) => {
+      const row: Record<string, any> = {
+        'GL계정': master.glCode,
+        'GL계정명': master.glName,
+        '세목': master.subItem,
+        '귀속': master.attribution,
+        '주관부서': master.dept,
+        '담당자': master.manager,
+      };
+
+      // Previous round columns (for reference)
+      if (prevRound) {
+        roundMonths.forEach((mNum) => {
+          const prevVal = getPrevMonthValue(master.id, mNum);
+          row[`[직전_${prevRound.name}] ${mNum}월`] = prevVal !== null ? prevVal : '';
+        });
+      }
+
+      // Current round input columns
+      roundMonths.forEach((mNum, idx) => {
+        const mKey = monthKeys[idx];
+        const curVal = getCellValue(master.id, mKey);
+        row[`[금번_${currentRound.name}] ${mNum}월`] = typeof curVal === 'number' ? curVal : (curVal || '');
+      });
+
+      // Variance columns
+      if (prevRound) {
+        roundMonths.forEach((mNum, idx) => {
+          const mKey = monthKeys[idx];
+          const curVal = getCellValue(master.id, mKey);
+          const prevVal = getPrevMonthValue(master.id, mNum);
+          const numCur = typeof curVal === 'number' ? curVal : parseFloat(String(curVal));
+          if (!isNaN(numCur) && prevVal !== null) {
+            row[`[차이] ${mNum}월`] = Number((numCur - prevVal).toFixed(1));
+          } else {
+            row[`[차이] ${mNum}월`] = '';
+          }
+        });
+      }
+
+      // Reason
+      row['차이사유'] = getReasonForMaster(master.id) || '';
+
+      return row;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    const sheetName = `${currentRound.name.replace(/[\\/*?:[\]]/g, '')}_입력데이터`;
+    XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+
+    const fileName = `${currentRound.name}_${selectedDept === 'all' ? '전체부서' : selectedDept}_비용추정_입력자료.xlsx`;
+    XLSX.writeFile(wb, fileName);
+  };
+
+  const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isClosed) {
+      alert('마감된 회차는 엑셀 업로드를 통한 수정을 할 수 없습니다.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json<any>(ws);
+
+        if (!data || data.length === 0) {
+          alert('엑셀 파일에 데이터가 없거나 올바르지 않은 형식입니다.');
+          return;
+        }
+
+        const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+        const newDrafts = { ...draftValues };
+        const newReasons = { ...draftReasons };
+        let matchedCount = 0;
+
+        data.forEach((row) => {
+          // Normalize row keys
+          const glCode = String(row['GL계정'] || row['GL코드'] || row['glCode'] || '').trim();
+          const glName = String(row['GL계정명'] || row['glName'] || '').trim();
+          const subItem = String(row['세목'] || row['subItem'] || '').trim();
+          const attribution = String(row['귀속'] || row['attribution'] || '').trim();
+          const dept = String(row['주관부서'] || row['dept'] || '').trim();
+
+          // Find matching master item from masterItems
+          const matchedMaster = masterItems.find((m) => {
+            // Strict match: glCode + subItem + attribution + dept
+            if (glCode && subItem && attribution && dept) {
+              if (m.glCode.trim() === glCode && m.subItem.trim() === subItem && m.attribution.trim() === attribution && m.dept.trim() === dept) {
+                return true;
+              }
+            }
+            // Secondary match: glCode + subItem + attribution
+            if (glCode && subItem && attribution) {
+              if (m.glCode.trim() === glCode && m.subItem.trim() === subItem && m.attribution.trim() === attribution) {
+                return true;
+              }
+            }
+            // Secondary match: glCode + subItem + dept
+            if (glCode && subItem && dept) {
+              if (m.glCode.trim() === glCode && m.subItem.trim() === subItem && m.dept.trim() === dept) {
+                return true;
+              }
+            }
+            // Match: glCode + subItem
+            if (glCode && subItem && m.glCode.trim() === glCode && m.subItem.trim() === subItem) {
+              return true;
+            }
+            // Fallback match: glName + subItem
+            if (glName && subItem && m.glName.trim() === glName && m.subItem.trim() === subItem) {
+              return true;
+            }
+            return false;
+          });
+
+          if (matchedMaster) {
+            let rowHasData = false;
+
+            // Extract month values
+            roundMonths.forEach((mNum, idx) => {
+              const mKey = monthKeys[idx];
+              // Look for columns like "[금번_...] 9월", "9월", "금번_9월", "m1"
+              let foundVal: any = undefined;
+
+              for (const colKey of Object.keys(row)) {
+                const k = colKey.trim();
+                // Avoid matching previous round or diff columns
+                if (k.includes('직전') || k.includes('차이')) continue;
+
+                if (
+                  k === `${mNum}월` ||
+                  k.endsWith(`] ${mNum}월`) ||
+                  k.includes(`_${mNum}월`) ||
+                  k.includes(`금번_${mNum}월`) ||
+                  k.includes(`금번 ${mNum}월`) ||
+                  k.toLowerCase() === `m${idx + 1}`
+                ) {
+                  foundVal = row[colKey];
+                  break;
+                }
+              }
+
+              if (foundVal !== undefined && foundVal !== null && String(foundVal).trim() !== '') {
+                const cleaned = String(foundVal).trim().replace(/,/g, '');
+                if (!isNaN(Number(cleaned))) {
+                  newDrafts[`${matchedMaster.id}_${mKey}`] = Number(Number(cleaned).toFixed(1));
+                  rowHasData = true;
+                } else if (cleaned === '') {
+                  newDrafts[`${matchedMaster.id}_${mKey}`] = '';
+                  rowHasData = true;
+                }
+              }
+            });
+
+            // Extract reason
+            for (const colKey of Object.keys(row)) {
+              const k = colKey.trim();
+              if (k === '차이사유' || k === '사유' || k === '차이 사유' || k.toLowerCase() === 'reason') {
+                const rVal = row[colKey];
+                if (rVal !== undefined && rVal !== null && String(rVal).trim() !== '') {
+                  newReasons[matchedMaster.id] = String(rVal).trim();
+                  rowHasData = true;
+                }
+                break;
+              }
+            }
+
+            if (rowHasData) {
+              matchedCount++;
+            }
+          }
+        });
+
+        setDraftValues(newDrafts);
+        setDraftReasons(newReasons);
+
+        if (matchedCount > 0) {
+          alert(`총 ${matchedCount}개 항목의 데이터(5개월치 입력값 및 차이사유)를 엑셀에서 성공적으로 불러왔습니다.\n\n화면에서 변경된 수치를 검토하신 후, [저장하기] 버튼을 눌러 확정해주세요.`);
+        } else {
+          alert('일치하는 GL계정/세목 항목을 찾을 수 없거나 입력 데이터가 비어있습니다. 양식(GL계정, 세목, 월별 열 등)을 확인해주세요.');
+        }
+      } catch (err) {
+        console.error(err);
+        alert('엑셀 파일 분석 중 오류가 발생했습니다. 파일 형식을 확인해주세요.');
+      }
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   return (
     <div className="max-w-[98rem] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Selectors & Save Button (Left Aligned) */}
-      <div className="flex flex-wrap items-center justify-start gap-3">
-        <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
-          <span className="text-xs font-semibold text-slate-500">입력 회차:</span>
-          <select
-            value={selectedRoundId}
-            onChange={(e) => {
-              setSelectedRoundId(e.target.value);
-              setDraftValues({});
-            }}
-            className="text-xs font-bold text-[#0F2D59] bg-[#0F2D59]/10 px-2.5 py-1 rounded border border-[#0F2D59]/20 focus:outline-hidden cursor-pointer"
-          >
-            {rounds.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name} ({r.status === 'open' ? '진행중' : '마감됨'})
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
-          <span className="text-xs font-semibold text-slate-500">부서:</span>
-          {currentUser.role === 'dept_user' ? (
-            <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded">
-              {currentUser.department} (내 부서)
-            </span>
-          ) : (
+      {/* Selectors & Actions Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
+            <span className="text-xs font-semibold text-slate-500">입력 회차:</span>
             <select
-              value={selectedDept}
-              onChange={(e) => setSelectedDept(e.target.value as Department | 'all')}
-              className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded border border-slate-200 focus:outline-hidden cursor-pointer"
+              value={selectedRoundId}
+              onChange={(e) => {
+                setSelectedRoundId(e.target.value);
+                setDraftValues({});
+              }}
+              className="text-xs font-bold text-[#0F2D59] bg-[#0F2D59]/10 px-2.5 py-1 rounded border border-[#0F2D59]/20 focus:outline-hidden cursor-pointer"
             >
-              <option value="all">전체 부서 보기</option>
-              {DEPARTMENTS.map((d) => (
-                <option key={d} value={d}>
-                  {d}
+              {rounds.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} ({r.status === 'open' ? '진행중' : '마감됨'})
                 </option>
               ))}
             </select>
-          )}
+          </div>
+
+          <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
+            <span className="text-xs font-semibold text-slate-500">부서:</span>
+            {currentUser.role === 'dept_user' ? (
+              <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded">
+                {currentUser.department} (내 부서)
+              </span>
+            ) : (
+              <select
+                value={selectedDept}
+                onChange={(e) => setSelectedDept(e.target.value as Department | 'all')}
+                className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded border border-slate-200 focus:outline-hidden cursor-pointer"
+              >
+                <option value="all">전체 부서 보기</option>
+                {DEPARTMENTS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
 
-        <button
-          onClick={handleSaveAll}
-          disabled={isClosed}
-          className={`inline-flex items-center px-4 py-2 rounded-xl font-medium text-xs shadow-xs transition-colors cursor-pointer ${
-            isClosed
-              ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-              : 'bg-[#0F2D59] text-white hover:bg-[#1B365D]'
-          }`}
-        >
-          <Save className="w-4 h-4 mr-1.5" />
-          저장하기
-        </button>
+        <div className="flex items-center gap-2">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleExcelUpload}
+            accept=".xlsx, .xls, .csv"
+            className="hidden"
+          />
+          <button
+            onClick={handleExcelDownload}
+            className="inline-flex items-center px-3.5 py-2 rounded-xl font-medium text-xs bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 shadow-xs transition-colors cursor-pointer"
+            title="현재 조회 중인 입력 양식 및 기존 데이터를 엑셀 파일로 다운로드합니다."
+          >
+            <FileSpreadsheet className="w-4 h-4 mr-1.5 text-emerald-600" />
+            엑셀 다운로드
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isClosed}
+            className={`inline-flex items-center px-3.5 py-2 rounded-xl font-medium text-xs shadow-xs transition-colors cursor-pointer ${
+              isClosed
+                ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-200'
+                : 'bg-emerald-600 text-white hover:bg-emerald-700'
+            }`}
+            title="엑셀 파일로 작성된 비용추정 입력 데이터를 일괄 업로드합니다."
+          >
+            <Upload className="w-4 h-4 mr-1.5" />
+            엑셀 업로드
+          </button>
+          <button
+            onClick={handleSaveAll}
+            disabled={isClosed}
+            className={`inline-flex items-center px-4 py-2 rounded-xl font-medium text-xs shadow-xs transition-colors cursor-pointer ${
+              isClosed
+                ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                : 'bg-[#0F2D59] text-white hover:bg-[#1B365D]'
+            }`}
+          >
+            <Save className="w-4 h-4 mr-1.5" />
+            저장하기
+          </button>
+        </div>
       </div>
 
       {/* Status Warning Banner */}

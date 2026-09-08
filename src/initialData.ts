@@ -32,16 +32,16 @@ export const INITIAL_GL_MASTER_ITEMS: GLMasterItem[] = [
 ];
 
 export const INITIAL_MASTER_ITEMS: MasterItem[] = [
-  { id: 'm-1', glCode: '51101000', glName: '급여', subItem: '기본급 및 수당', attribution: '공통', dept: '노경', manager: '김철수' },
-  { id: 'm-2', glCode: '51102000', glName: '복리후생비', subItem: '복리후생비', attribution: '공통', dept: '노경', manager: '이영수' },
-  { id: 'm-3', glCode: '52201000', glName: '소모품비', subItem: '보호구 및 안전용품', attribution: 'MTBE4', dept: '환경안전', manager: '이영희' },
-  { id: 'm-4', glCode: '52202000', glName: '수선비', subItem: '환경 개선 공사비', attribution: 'P3', dept: '환경안전', manager: '박철호' },
-  { id: 'm-5', glCode: '53301000', glName: '지불수수료', subItem: '보안 S/W 라이선스', attribution: '공통', dept: 'IT보안팀', manager: '박민수' },
-  { id: 'm-6', glCode: '53302000', glName: '유지보수비', subItem: '네트워크 장비 유지보수', attribution: 'MTBE4', dept: 'IT보안팀', manager: '최수진' },
-  { id: 'm-7', glCode: '54401000', glName: '원재료비', subItem: '원자재 매입대금', attribution: 'MTBE4', dept: '구매', manager: '정지훈' },
-  { id: 'm-8', glCode: '54402000', glName: '외주가공비', subItem: '부자재 외주비', attribution: 'P3', dept: '구매', manager: '강민아' },
-  { id: 'm-9', glCode: '55501000', glName: '수선비', subItem: '생산설비 부품교체', attribution: 'P3', dept: '기술팀', manager: '한상진' },
-  { id: 'm-10', glCode: '55502000', glName: '지급수수료', subItem: '엔지니어링 용역비', attribution: '공통', dept: '기술팀', manager: '오성민' },
+  { id: 'm-1', keyNo: 1, glCode: '51101000', glName: '급여', subItem: '기본급 및 수당', attribution: '공통', dept: '노경', manager: '김철수' },
+  { id: 'm-2', keyNo: 2, glCode: '51102000', glName: '복리후생비', subItem: '복리후생비', attribution: '공통', dept: '노경', manager: '이영수' },
+  { id: 'm-3', keyNo: 3, glCode: '52201000', glName: '소모품비', subItem: '보호구 및 안전용품', attribution: 'MTBE4', dept: '환경안전', manager: '이영희' },
+  { id: 'm-4', keyNo: 4, glCode: '52202000', glName: '수선비', subItem: '환경 개선 공사비', attribution: 'P3', dept: '환경안전', manager: '박철호' },
+  { id: 'm-5', keyNo: 5, glCode: '53301000', glName: '지불수수료', subItem: '보안 S/W 라이선스', attribution: '공통', dept: 'IT보안팀', manager: '박민수' },
+  { id: 'm-6', keyNo: 6, glCode: '53302000', glName: '유지보수비', subItem: '네트워크 장비 유지보수', attribution: 'MTBE4', dept: 'IT보안팀', manager: '최수진' },
+  { id: 'm-7', keyNo: 7, glCode: '54401000', glName: '원재료비', subItem: '원자재 매입대금', attribution: 'MTBE4', dept: '구매', manager: '정지훈' },
+  { id: 'm-8', keyNo: 8, glCode: '54402000', glName: '외주가공비', subItem: '부자재 외주비', attribution: 'P3', dept: '구매', manager: '강민아' },
+  { id: 'm-9', keyNo: 9, glCode: '55501000', glName: '수선비', subItem: '생산설비 부품교체', attribution: 'P3', dept: '기술팀', manager: '한상진' },
+  { id: 'm-10', keyNo: 10, glCode: '55502000', glName: '지급수수료', subItem: '엔지니어링 용역비', attribution: '공통', dept: '기술팀', manager: '오성민' },
 ];
 
 // Sample Entries (Values in 백만원 unit)

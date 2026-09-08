@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Department, EntryData, MasterItem, Round, UserProfile } from '../types';
 import { DEPARTMENTS } from '../initialData';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, ChevronDown, ChevronRight, CheckCircle2, FileSpreadsheet, Layers } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface DashboardViewProps {
   currentUser: UserProfile;
@@ -214,6 +215,218 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
   const completedManagersAll = deptSummary.reduce((acc, d) => acc + d.completedManagers, 0);
   const isAllComplete = completedDepts === totalDepts && totalDepts > 0;
 
+  // Summary calculation restricted to COMPLETED departments only
+  const completedDeptSummaries = useMemo(() => {
+    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+    
+    // Only completed departments
+    const completedDeptsList = deptSummary.filter((d) => d.isComplete);
+
+    return completedDeptsList.map((d) => {
+      const deptMasters = masterItems.filter((m) => m.dept === d.dept);
+      const managers = Array.from(new Set(deptMasters.map((m) => m.manager))).sort();
+
+      // Manager-level breakdown
+      const managerSummaries = managers.map((mgr) => {
+        const mgrMasters = deptMasters.filter((m) => m.manager === mgr);
+        const count = mgrMasters.length;
+
+        // Prev 5 months (N차)
+        const prevMonths = roundMonths.map((mNum) => {
+          return mgrMasters.reduce((sum, m) => {
+            const val = getPrevMonthValue(m.id, mNum);
+            return sum + (val !== null ? val : 0);
+          }, 0);
+        });
+        const prevTotal = Number(prevMonths.reduce((a, b) => a + b, 0).toFixed(1));
+
+        // Current 5 months (N+1차)
+        const curMonths = monthKeys.map((mKey) => {
+          return mgrMasters.reduce((sum, m) => {
+            const entry = roundEntries.find((e) => e.masterId === m.id);
+            const val = entry?.[mKey];
+            return sum + (typeof val === 'number' && !isNaN(val) ? val : 0);
+          }, 0);
+        });
+        const curTotal = Number(curMonths.reduce((a, b) => a + b, 0).toFixed(1));
+
+        // Diff 5 months
+        const diffMonths = [0, 1, 2, 3, 4].map((idx) => Number((curMonths[idx] - prevMonths[idx]).toFixed(1)));
+        const diffTotal = Number((curTotal - prevTotal).toFixed(1));
+
+        return {
+          manager: mgr,
+          count,
+          prevMonths: prevMonths.map((v) => Number(v.toFixed(1))),
+          prevTotal,
+          curMonths: curMonths.map((v) => Number(v.toFixed(1))),
+          curTotal,
+          diffMonths,
+          diffTotal,
+        };
+      });
+
+      // Dept-level totals
+      const count = deptMasters.length;
+      const prevMonths = [0, 1, 2, 3, 4].map((idx) =>
+        Number(managerSummaries.reduce((sum, ms) => sum + ms.prevMonths[idx], 0).toFixed(1))
+      );
+      const prevTotal = Number(prevMonths.reduce((a, b) => a + b, 0).toFixed(1));
+
+      const curMonths = [0, 1, 2, 3, 4].map((idx) =>
+        Number(managerSummaries.reduce((sum, ms) => sum + ms.curMonths[idx], 0).toFixed(1))
+      );
+      const curTotal = Number(curMonths.reduce((a, b) => a + b, 0).toFixed(1));
+
+      const diffMonths = [0, 1, 2, 3, 4].map((idx) => Number((curMonths[idx] - prevMonths[idx]).toFixed(1)));
+      const diffTotal = Number((curTotal - prevTotal).toFixed(1));
+
+      return {
+        dept: d.dept,
+        count,
+        managerSummaries,
+        prevMonths,
+        prevTotal,
+        curMonths,
+        curTotal,
+        diffMonths,
+        diffTotal,
+      };
+    });
+  }, [deptSummary, masterItems, roundEntries, roundMonths, prevRound, prevRoundEntries, selectedRoundId]);
+
+  // Grand summary across all completed departments
+  const grandCompletedSummary = useMemo(() => {
+    const count = completedDeptSummaries.reduce((sum, d) => sum + d.count, 0);
+    const prevMonths = [0, 1, 2, 3, 4].map((idx) =>
+      Number(completedDeptSummaries.reduce((sum, d) => sum + d.prevMonths[idx], 0).toFixed(1))
+    );
+    const prevTotal = Number(prevMonths.reduce((a, b) => a + b, 0).toFixed(1));
+
+    const curMonths = [0, 1, 2, 3, 4].map((idx) =>
+      Number(completedDeptSummaries.reduce((sum, d) => sum + d.curMonths[idx], 0).toFixed(1))
+    );
+    const curTotal = Number(curMonths.reduce((a, b) => a + b, 0).toFixed(1));
+
+    const diffMonths = [0, 1, 2, 3, 4].map((idx) => Number((curMonths[idx] - prevMonths[idx]).toFixed(1)));
+    const diffTotal = Number((curTotal - prevTotal).toFixed(1));
+
+    return {
+      count,
+      prevMonths,
+      prevTotal,
+      curMonths,
+      curTotal,
+      diffMonths,
+      diffTotal,
+    };
+  }, [completedDeptSummaries]);
+
+  // Track expanded department rows in the summary table (default all open)
+  const [expandedDepts, setExpandedDepts] = useState<Record<string, boolean>>({
+    노경: true,
+    환경안전: true,
+    IT보안팀: true,
+    구매: true,
+    기술팀: true,
+  });
+
+  const toggleDeptExpanded = (deptName: string) => {
+    setExpandedDepts((prev) => ({
+      ...prev,
+      [deptName]: prev[deptName] === false ? true : false,
+    }));
+  };
+
+  const handleExpandAll = (expand: boolean) => {
+    const next: Record<string, boolean> = {};
+    DEPARTMENTS.forEach((d) => {
+      next[d] = expand;
+    });
+    setExpandedDepts(next);
+  };
+
+  const handleDownloadSummaryExcel = () => {
+    if (!currentRound || completedDeptSummaries.length === 0) {
+      alert('작성완료된 부서 데이터가 없습니다.');
+      return;
+    }
+
+    const rows: Record<string, any>[] = [];
+
+    completedDeptSummaries.forEach((d) => {
+      // Dept summary row
+      const deptRow: Record<string, any> = {
+        '구분': d.dept,
+        '담당자': '부서 합계',
+        '작성건수': d.count,
+      };
+      // Previous round columns
+      roundMonths.forEach((mNum, idx) => {
+        deptRow[`[${prevRound?.name || '직전'}] ${mNum}월`] = d.prevMonths[idx];
+      });
+
+      // Current round columns
+      roundMonths.forEach((mNum, idx) => {
+        deptRow[`[${currentRound.name}] ${mNum}월`] = d.curMonths[idx];
+      });
+
+      // Variance columns
+      roundMonths.forEach((mNum, idx) => {
+        deptRow[`[차이금액] ${mNum}월`] = d.diffMonths[idx];
+      });
+
+      rows.push(deptRow);
+
+      // Manager rows
+      d.managerSummaries.forEach((ms) => {
+        const mgrRow: Record<string, any> = {
+          '구분': `└ ${d.dept}`,
+          '담당자': ms.manager,
+          '작성건수': ms.count,
+        };
+        roundMonths.forEach((mNum, idx) => {
+          mgrRow[`[${prevRound?.name || '직전'}] ${mNum}월`] = ms.prevMonths[idx];
+        });
+
+        roundMonths.forEach((mNum, idx) => {
+          mgrRow[`[${currentRound.name}] ${mNum}월`] = ms.curMonths[idx];
+        });
+
+        roundMonths.forEach((mNum, idx) => {
+          mgrRow[`[차이금액] ${mNum}월`] = ms.diffMonths[idx];
+        });
+
+        rows.push(mgrRow);
+      });
+    });
+
+    // Grand total
+    const grandRow: Record<string, any> = {
+      '구분': '작성완료 부서 총계',
+      '담당자': `총 ${completedDeptSummaries.length}개 부서`,
+      '작성건수': grandCompletedSummary.count,
+    };
+    roundMonths.forEach((mNum, idx) => {
+      grandRow[`[${prevRound?.name || '직전'}] ${mNum}월`] = grandCompletedSummary.prevMonths[idx];
+    });
+
+    roundMonths.forEach((mNum, idx) => {
+      grandRow[`[${currentRound.name}] ${mNum}월`] = grandCompletedSummary.curMonths[idx];
+    });
+
+    roundMonths.forEach((mNum, idx) => {
+      grandRow[`[차이금액] ${mNum}월`] = grandCompletedSummary.diffMonths[idx];
+    });
+
+    rows.push(grandRow);
+
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '작성완료_부서별요약');
+    XLSX.writeFile(wb, `${currentRound.name}_작성완료_부서별요약집계.xlsx`);
+  };
+
   const filteredMasterItems = masterItems.filter((m) => {
     const matchesDept = !filterDept || filterDept === 'all' || (m.dept || '').toLowerCase().includes(filterDept.toLowerCase());
     const glQuery = (filterGlCode || '').trim().toLowerCase();
@@ -364,6 +577,292 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
                 </div>
               );
             })}
+        </div>
+      </div>
+
+      {/* Department & Manager Summary Table (Only for Completed Departments) */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+        <div className="p-6 border-b border-slate-200">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div>
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-[#0F2D59]/10 text-[#0F2D59] rounded-xl">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-base font-bold text-slate-900">
+                      부서별 요약 (작성완료 부서 한정)
+                    </h3>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1 text-emerald-600" />
+                      작성완료 {completedDeptSummaries.length} / {DEPARTMENTS.length}개 부서
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    * 작성완료(모든 담당자 입력 완료)된 부서에 한정하여 부서별 및 담당자별 작성 건수, 직전/금번 회차 월별 금액 및 차이금액 합계를 표시합니다. (단위: 백만원)
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => handleExpandAll(true)}
+                className="px-2.5 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
+              >
+                전체 펼치기
+              </button>
+              <button
+                onClick={() => handleExpandAll(false)}
+                className="px-2.5 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors cursor-pointer"
+              >
+                전체 접기
+              </button>
+              <button
+                onClick={handleDownloadSummaryExcel}
+                disabled={completedDeptSummaries.length === 0}
+                className={`inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer ${
+                  completedDeptSummaries.length === 0
+                    ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                    : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                }`}
+                title="작성완료 부서별/담당자별 요약 집계 데이터를 엑셀로 다운로드합니다."
+              >
+                <FileSpreadsheet className="w-4 h-4 mr-1.5" />
+                요약 엑셀 다운로드
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[1100px]">
+            <thead>
+              {/* Top Header Grouping */}
+              <tr className="bg-[#0F2D59] text-white text-xs font-bold divide-x divide-[#1B365D]">
+                <th colSpan={2} className="py-2.5 px-3 text-center">
+                  구분
+                </th>
+                <th rowSpan={2} className="py-2.5 px-3 text-center w-20 border-b border-[#1B365D]">
+                  작성건수
+                </th>
+                <th colSpan={5} className="py-2.5 px-3 text-center bg-[#183B6B]">
+                  {prevRound?.name || '직전 회차'}
+                </th>
+                <th colSpan={5} className="py-2.5 px-3 text-center bg-[#1F4A85]">
+                  {currentRound?.name || '금번 회차'}
+                </th>
+                <th colSpan={5} className="py-2.5 px-3 text-center bg-[#2B5F9E]">
+                  차이금액
+                </th>
+              </tr>
+              {/* Sub Header for Months */}
+              <tr className="bg-slate-100 text-[11px] font-semibold text-slate-700 border-b border-slate-300 divide-x divide-slate-200">
+                <th className="py-2 px-3 text-center w-24">부서</th>
+                <th className="py-2 px-3 text-center w-24">담당자</th>
+
+                {/* N차 5 months */}
+                {[0, 1, 2, 3, 4].map((idx) => (
+                  <th key={`hdr-prev-${idx}`} className={`py-2 px-2 text-right bg-slate-50 font-mono w-20 ${idx === 4 ? 'border-r border-slate-300' : ''}`}>
+                    {getMonthName(idx)}
+                  </th>
+                ))}
+
+                {/* N+1차 5 months */}
+                {[0, 1, 2, 3, 4].map((idx) => (
+                  <th key={`hdr-cur-${idx}`} className={`py-2 px-2 text-right bg-blue-50/50 font-mono text-[#0F2D59] w-20 ${idx === 4 ? 'border-r border-slate-300' : ''}`}>
+                    {getMonthName(idx)}
+                  </th>
+                ))}
+
+                {/* Diff 5 months */}
+                {[0, 1, 2, 3, 4].map((idx) => (
+                  <th key={`hdr-diff-${idx}`} className="py-2 px-2 text-right bg-slate-50 font-mono w-20">
+                    {getMonthName(idx)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 text-xs">
+              {completedDeptSummaries.length === 0 ? (
+                <tr>
+                  <td colSpan={18} className="py-12 text-center text-slate-500 bg-slate-50/50">
+                    <div className="flex flex-col items-center justify-center space-y-2">
+                      <div className="w-10 h-10 rounded-full bg-slate-200/70 flex items-center justify-center text-slate-400">
+                        <CheckCircle2 className="w-6 h-6" />
+                      </div>
+                      <p className="text-sm font-semibold text-slate-700">현재 작성완료된 부서가 없습니다.</p>
+                      <p className="text-xs text-slate-500">
+                        부서 내 모든 담당자가 비용추정 입력을 완료하면 해당 부서의 요약 집계가 자동으로 표시됩니다.
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                completedDeptSummaries.map((d) => {
+                  const isExpanded = expandedDepts[d.dept] !== false;
+
+                  return (
+                    <React.Fragment key={d.dept}>
+                      {/* Department Summary Row */}
+                      <tr className="bg-slate-100/90 font-semibold text-slate-900 hover:bg-slate-200/70 transition-colors border-t-2 border-slate-300">
+                        <td className="py-2.5 px-3">
+                          <button
+                            onClick={() => toggleDeptExpanded(d.dept)}
+                            className="flex items-center space-x-1.5 text-left font-bold text-slate-900 hover:text-[#0F2D59] cursor-pointer"
+                          >
+                            {isExpanded ? (
+                              <ChevronDown className="w-4 h-4 text-slate-600" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-slate-600" />
+                            )}
+                            <span>{d.dept}</span>
+                          </button>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-500 font-normal">
+                          <span className="inline-block bg-slate-200 text-slate-700 text-[10px] px-1.5 py-0.5 rounded font-semibold">
+                            부서 합계
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono font-bold text-slate-800">
+                          {d.count}건
+                        </td>
+
+                        {/* N차 5 months */}
+                        {d.prevMonths.map((val, idx) => (
+                          <td key={`dept-prev-${idx}`} className={`py-2 px-2 text-right font-mono bg-slate-50/60 ${idx === 4 ? 'border-r border-slate-300' : ''}`}>
+                            {val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                          </td>
+                        ))}
+
+                        {/* N+1차 5 months */}
+                        {d.curMonths.map((val, idx) => (
+                          <td key={`dept-cur-${idx}`} className={`py-2 px-2 text-right font-mono text-[#0F2D59] bg-blue-50/40 font-bold ${idx === 4 ? 'border-r border-slate-300' : ''}`}>
+                            {val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                          </td>
+                        ))}
+
+                        {/* Diff 5 months */}
+                        {d.diffMonths.map((diff, idx) => (
+                          <td key={`dept-diff-${idx}`} className="py-2 px-2 text-right font-mono">
+                            <span
+                              className={
+                                diff > 0
+                                  ? 'text-red-600 font-bold'
+                                  : diff < 0
+                                  ? 'text-blue-600 font-bold'
+                                  : 'text-slate-500'
+                              }
+                            >
+                              {diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()}
+                            </span>
+                          </td>
+                        ))}
+                      </tr>
+
+                      {/* Manager Rows (when expanded) */}
+                      {isExpanded &&
+                        d.managerSummaries.map((ms) => (
+                          <tr key={`${d.dept}-${ms.manager}`} className="bg-white hover:bg-slate-50/80 transition-colors">
+                            <td className="py-2 px-3 pl-8 text-slate-400 text-[11px]">
+                              ↳ {d.dept}
+                            </td>
+                            <td className="py-2 px-3 text-slate-800 font-medium">
+                              {ms.manager}
+                            </td>
+                            <td className="py-2 px-3 text-center font-mono text-slate-600 text-xs">
+                              {ms.count}건
+                            </td>
+
+                            {/* Manager N차 5 months */}
+                            {ms.prevMonths.map((val, idx) => (
+                              <td key={`mgr-prev-${idx}`} className={`py-2 px-2 text-right font-mono text-slate-500 bg-slate-50/30 ${idx === 4 ? 'border-r border-slate-200' : ''}`}>
+                                {val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                              </td>
+                            ))}
+
+                            {/* Manager N+1차 5 months */}
+                            {ms.curMonths.map((val, idx) => (
+                              <td key={`mgr-cur-${idx}`} className={`py-2 px-2 text-right font-mono font-medium text-slate-800 bg-blue-50/20 ${idx === 4 ? 'border-r border-slate-200' : ''}`}>
+                                {val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                              </td>
+                            ))}
+
+                            {/* Manager Diff 5 months */}
+                            {ms.diffMonths.map((diff, idx) => (
+                              <td key={`mgr-diff-${idx}`} className="py-2 px-2 text-right font-mono">
+                                <span
+                                  className={
+                                    diff > 0
+                                      ? 'text-red-600 font-semibold'
+                                      : diff < 0
+                                      ? 'text-blue-600 font-semibold'
+                                      : 'text-slate-400'
+                                  }
+                                >
+                                  {diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()}
+                                </span>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                    </React.Fragment>
+                  );
+                })
+              )}
+            </tbody>
+
+            {/* Grand Total Footer for all Completed Depts */}
+            {completedDeptSummaries.length > 0 && (
+              <tfoot>
+                <tr className="bg-slate-900 text-white font-bold text-xs border-t-2 border-slate-900">
+                  <td colSpan={2} className="py-3 px-4">
+                    <div className="flex items-center space-x-2">
+                      <span>작성완료 부서 총계</span>
+                      <span className="text-[11px] font-normal text-slate-300">
+                        (총 {completedDeptSummaries.length}개 부서)
+                      </span>
+                    </div>
+                  </td>
+                  <td className="py-3 px-3 text-center font-mono text-amber-300">
+                    {grandCompletedSummary.count}건
+                  </td>
+
+                  {/* Grand N차 5 months */}
+                  {grandCompletedSummary.prevMonths.map((val, idx) => (
+                    <td key={`grand-prev-${idx}`} className={`py-3 px-2 text-right font-mono text-slate-300 bg-slate-800/80 ${idx === 4 ? 'border-r border-slate-700' : ''}`}>
+                      {val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                    </td>
+                  ))}
+
+                  {/* Grand N+1차 5 months */}
+                  {grandCompletedSummary.curMonths.map((val, idx) => (
+                    <td key={`grand-cur-${idx}`} className={`py-3 px-2 text-right font-mono text-white bg-slate-800/80 font-bold ${idx === 4 ? 'border-r border-slate-700' : ''}`}>
+                      {val.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}
+                    </td>
+                  ))}
+
+                  {/* Grand Diff 5 months */}
+                  {grandCompletedSummary.diffMonths.map((diff, idx) => (
+                    <td key={`grand-diff-${idx}`} className="py-3 px-2 text-right font-mono bg-slate-800/80">
+                      <span
+                        className={
+                          diff > 0
+                            ? 'text-red-400 font-bold'
+                            : diff < 0
+                            ? 'text-blue-400 font-bold'
+                            : 'text-slate-400'
+                        }
+                      >
+                        {diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()}
+                      </span>
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
+            )}
+          </table>
         </div>
       </div>
 
