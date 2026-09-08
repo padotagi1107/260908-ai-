@@ -1,17 +1,27 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL || localStorage.getItem('supabase_url') || '';
-const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || localStorage.getItem('supabase_anon_key') || '';
+export function getSupabaseConfig(): { url: string; anonKey: string } {
+  const url = (import.meta as any).env?.VITE_SUPABASE_URL || localStorage.getItem('supabase_url') || '';
+  const anonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || localStorage.getItem('supabase_anon_key') || '';
+  return { url, anonKey };
+}
 
-export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+const currentConfig = getSupabaseConfig();
+export const isSupabaseConfigured = Boolean(currentConfig.url && currentConfig.anonKey);
 
 export const supabase = isSupabaseConfigured
-  ? createClient(supabaseUrl, supabaseAnonKey)
+  ? createClient(currentConfig.url, currentConfig.anonKey)
   : null;
 
 export function saveSupabaseConfig(url: string, anonKey: string) {
-  localStorage.setItem('supabase_url', url);
-  localStorage.setItem('supabase_anon_key', anonKey);
+  localStorage.setItem('supabase_url', url.trim());
+  localStorage.setItem('supabase_anon_key', anonKey.trim());
+  window.location.reload();
+}
+
+export function clearSupabaseConfig() {
+  localStorage.removeItem('supabase_url');
+  localStorage.removeItem('supabase_anon_key');
   window.location.reload();
 }
 
