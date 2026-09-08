@@ -4,6 +4,7 @@ import { DEPARTMENTS } from '../initialData';
 import { Users, ShieldCheck, Shield, Plus, Edit2, Trash2, X } from 'lucide-react';
 
 interface UserManagementProps {
+  currentUser?: UserProfile;
   users: UserProfile[];
   onAddUser: (user: Omit<UserProfile, 'id'>) => void;
   onUpdateUser: (user: UserProfile) => void;
@@ -11,6 +12,7 @@ interface UserManagementProps {
 }
 
 export const UserManagement: React.FC<UserManagementProps> = ({
+  currentUser,
   users,
   onAddUser,
   onUpdateUser,
@@ -99,59 +101,78 @@ export const UserManagement: React.FC<UserManagementProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
-              {users.map((u) => (
-                <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3 px-4 font-semibold text-slate-900 flex items-center space-x-2">
-                    <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">
-                      {u.name.charAt(0)}
-                    </div>
-                    <span>{u.name}</span>
-                  </td>
-                  <td className="py-3 px-4 text-slate-600">{u.email}</td>
-                  <td className="py-3 px-4">
-                    {u.role === 'operator' ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                        <ShieldCheck className="w-3 h-3 mr-1 text-amber-600" /> 총괄 운영자
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200">
-                        <Shield className="w-3 h-3 mr-1 text-blue-600" /> 부서 담당자
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4 font-medium text-slate-800">
-                    {u.role === 'operator' ? (
-                      <span className="text-slate-400 italic">전체 권한</span>
-                    ) : (
-                      <span className="px-2 py-0.5 bg-slate-100 rounded text-xs text-slate-700">
-                        {u.department}
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-3 px-4 text-center">
-                    <div className="flex items-center justify-center space-x-2">
-                      <button
-                        onClick={() => handleOpenEdit(u)}
-                        className="p-1 rounded hover:bg-slate-200 text-slate-600 transition-colors"
-                        title="수정"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (confirm(`"${u.name}" 사용자를 삭제하시겠습니까?`)) {
-                            onDeleteUser(u.id);
-                          }
-                        }}
-                        className="p-1 rounded hover:bg-red-100 text-red-600 transition-colors"
-                        title="삭제"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {users.map((u) => {
+                const isCurrent = currentUser?.id === u.id || currentUser?.email.toLowerCase() === u.email.toLowerCase();
+                return (
+                  <tr key={u.id} className={`hover:bg-slate-50/80 transition-colors ${isCurrent ? 'bg-blue-50/30' : ''}`}>
+                    <td className="py-3 px-4 font-semibold text-slate-900 flex items-center space-x-2">
+                      <div className="w-7 h-7 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-700">
+                        {u.name.charAt(0)}
+                      </div>
+                      <div className="flex items-center space-x-1.5">
+                        <span>{u.name}</span>
+                        {isCurrent && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#0F2D59] text-white">
+                            접속중
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-slate-600 font-mono text-xs">{u.email}</td>
+                    <td className="py-3 px-4">
+                      {u.role === 'operator' ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                          <ShieldCheck className="w-3 h-3 mr-1 text-amber-600" /> 총괄 운영자
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200">
+                          <Shield className="w-3 h-3 mr-1 text-blue-600" /> 부서 담당자
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 font-medium text-slate-800">
+                      {u.role === 'operator' ? (
+                        <span className="text-slate-400 italic text-xs">전체 권한</span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-slate-100 rounded text-xs text-slate-700">
+                          {u.department}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <div className="flex items-center justify-center space-x-2">
+                        <button
+                          onClick={() => handleOpenEdit(u)}
+                          className="p-1 rounded hover:bg-slate-200 text-slate-600 transition-colors"
+                          title="수정"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (isCurrent) {
+                              alert('현재 로그인 중인 계정은 삭제할 수 없습니다.');
+                              return;
+                            }
+                            if (confirm(`"${u.name}" 사용자를 삭제하시겠습니까?`)) {
+                              onDeleteUser(u.id);
+                            }
+                          }}
+                          disabled={isCurrent}
+                          className={`p-1 rounded transition-colors ${
+                            isCurrent
+                              ? 'text-slate-300 cursor-not-allowed'
+                              : 'hover:bg-red-100 text-red-600'
+                          }`}
+                          title={isCurrent ? '현재 로그인 계정 삭제 불가' : '삭제'}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

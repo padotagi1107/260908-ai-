@@ -89,16 +89,25 @@ export function App() {
     localStorage.setItem('company_platform_auth', 'true');
     localStorage.setItem('company_platform_auth_email', email);
 
+    const isOperator =
+      role === 'admin' ||
+      role === 'operator' ||
+      email.toLowerCase().includes('admin') ||
+      email.toLowerCase().includes('operator');
+
     // Sync with users list
-    const existing = users.find((u) => u.email.toLowerCase() === email.toLowerCase());
-    if (existing) {
-      setCurrentUserId(existing.id);
+    const existingIndex = users.findIndex((u) => u.email.toLowerCase() === email.toLowerCase());
+    if (existingIndex >= 0) {
+      const updatedUsers = [...users];
+      updatedUsers[existingIndex] = {
+        ...updatedUsers[existingIndex],
+        name: name || updatedUsers[existingIndex].name,
+        role: isOperator ? 'operator' : 'dept_user',
+        department: isOperator ? undefined : ((department as Department) || updatedUsers[existingIndex].department || '노경'),
+      };
+      setUsers(updatedUsers);
+      setCurrentUserId(updatedUsers[existingIndex].id);
     } else {
-      const isOperator =
-        role === 'admin' ||
-        role === 'operator' ||
-        email.toLowerCase().includes('admin') ||
-        email.toLowerCase().includes('operator');
       const newUser: UserProfile = {
         id: `usr-${Date.now()}`,
         name: name || email.split('@')[0],
@@ -187,15 +196,15 @@ export function App() {
   };
 
   const handleDeleteUser = (userId: string) => {
+    if (userId === currentUserId || users.find((u) => u.id === userId)?.email.toLowerCase() === authEmail.toLowerCase()) {
+      alert('현재 로그인 중인 계정은 삭제할 수 없습니다.');
+      return;
+    }
     if (users.length <= 1) {
       alert('최소 1명의 사용자가 필요합니다.');
       return;
     }
     setUsers(users.filter((u) => u.id !== userId));
-    if (currentUserId === userId) {
-      const remaining = users.filter((u) => u.id !== userId);
-      setCurrentUserId(remaining[0].id);
-    }
   };
 
   // Entry Handlers
@@ -232,8 +241,6 @@ export function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         currentUser={currentUser}
-        users={users}
-        onSwitchUser={setCurrentUserId}
         onLogout={handleLogout}
       />
 
@@ -278,6 +285,7 @@ export function App() {
         )}
         {activeTab === 'users' && currentUser.role === 'operator' && (
           <UserManagement
+            currentUser={currentUser}
             users={users}
             onAddUser={handleAddUser}
             onUpdateUser={handleUpdateUser}

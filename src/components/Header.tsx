@@ -6,8 +6,6 @@ interface HeaderProps {
   activeTab: ActiveTab;
   setActiveTab: (tab: ActiveTab) => void;
   currentUser: UserProfile;
-  users: UserProfile[];
-  onSwitchUser: (userId: string) => void;
   onLogout?: () => void;
 }
 
@@ -15,8 +13,6 @@ export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   currentUser,
-  users,
-  onSwitchUser,
   onLogout,
 }) => {
   return (
@@ -35,40 +31,50 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* User Switcher & Logout */}
+          {/* User Profile (Fixed for logged-in account) & Logout */}
           <div className="flex items-center space-x-3">
-            <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
-              <div className="px-2.5 py-1 flex items-center space-x-1.5">
+            <div className="flex items-center bg-slate-50 rounded-xl px-3 py-1.5 border border-slate-200 space-x-2.5">
+              <div
+                className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                  currentUser.role === 'operator'
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-blue-100 text-[#0F2D59]'
+                }`}
+              >
                 {currentUser.role === 'operator' ? (
-                  <ShieldCheck className="w-4 h-4 text-amber-600" />
+                  <ShieldCheck className="w-4 h-4" />
                 ) : (
-                  <Users className="w-4 h-4 text-blue-600" />
+                  <Users className="w-4 h-4" />
                 )}
-                <span className="text-xs font-semibold text-slate-700">
-                  {currentUser.role === 'operator' ? '운영자' : `${currentUser.department} 담당자`}
+              </div>
+
+              <div className="flex flex-col text-left">
+                <div className="flex items-center space-x-1.5">
+                  <span className="text-xs font-bold text-slate-800">{currentUser.name}</span>
+                  <span
+                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                      currentUser.role === 'operator'
+                        ? 'bg-amber-500/10 text-amber-700 border border-amber-500/20'
+                        : 'bg-blue-500/10 text-blue-700 border border-blue-500/20'
+                    }`}
+                  >
+                    {currentUser.role === 'operator' ? '운영자' : `${currentUser.department} 담당자`}
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-400 font-mono leading-tight">
+                  {currentUser.email}
                 </span>
               </div>
-              <select
-                value={currentUser.id}
-                onChange={(e) => onSwitchUser(e.target.value)}
-                className="text-xs bg-white text-slate-700 font-medium py-1 px-2 rounded border border-slate-300 focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-                title="사용자 모드 변경"
-              >
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} ({u.role === 'operator' ? '운영자' : u.department})
-                  </option>
-                ))}
-              </select>
             </div>
 
             {onLogout && (
               <button
                 onClick={onLogout}
-                className="p-2 rounded-lg bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 transition-colors border border-slate-200"
-                title="로그아웃"
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-red-50 text-slate-600 hover:text-red-600 transition-colors border border-slate-200 text-xs font-medium cursor-pointer"
+                title="로그아웃 (다른 사용자로 로그인하려면 로그아웃하세요)"
               >
-                <LogOut className="w-4 h-4" />
+                <LogOut className="w-3.5 h-3.5" />
+                <span>로그아웃</span>
               </button>
             )}
           </div>
