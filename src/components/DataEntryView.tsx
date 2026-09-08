@@ -86,13 +86,25 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
   const yearSpans = getYearSpans();
 
   // Local draft state
-  const [draftValues, setDraftValues] = useState<{ [key: string]: number | '' }>({});
+  const [draftValues, setDraftValues] = useState<{ [key: string]: number | string }>({});
   const [draftReasons, setDraftReasons] = useState<{ [key: string]: string }>({});
 
   // Multi-cell selection & Excel paste support
   const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
   const [anchorCell, setAnchorCell] = useState<{ rIdx: number; mIdx: number } | null>(null);
   const [currentCell, setCurrentCell] = useState<{ rIdx: number; mIdx: number } | null>(null);
+
+  const handleCellFocus = (rIdx: number, mIdx: number) => {
+    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+    const master = filteredMasterItems[rIdx];
+    if (!master) return;
+    const cellKey = `${master.id}_${monthKeys[mIdx]}`;
+    setCurrentCell({ rIdx, mIdx });
+    if (selectedCells.size <= 1) {
+      setAnchorCell({ rIdx, mIdx });
+      setSelectedCells(new Set([cellKey]));
+    }
+  };
 
   const handleCellClick = (rIdx: number, mIdx: number, e: React.MouseEvent) => {
     const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
@@ -121,11 +133,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       setSelectedCells(newSelected);
     } else {
       setAnchorCell({ rIdx, mIdx });
-      setSelectedCells(() => {
-        const next = new Set<string>();
-        next.add(cellKey);
-        return next;
-      });
+      setSelectedCells(new Set([cellKey]));
     }
   };
 
@@ -172,33 +180,41 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     // Delete / Backspace (Clear values in selected cells)
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (selectedCells.size > 0 && !isClosed) {
-        if (!isInput || (isInput && (activeTarget as HTMLInputElement).value === '')) {
+        const shouldClearSelection =
+          e.key === 'Delete' ||
+          selectedCells.size > 1 ||
+          !isInput ||
+          (isInput && (activeTarget as HTMLInputElement).value === '');
+
+        if (shouldClearSelection) {
           e.preventDefault();
           const newDrafts = { ...draftValues };
           selectedCells.forEach(cellKey => {
             newDrafts[cellKey] = '';
           });
           setDraftValues(newDrafts);
+          return;
         }
       }
-      return;
     }
 
     // Arrow navigation & Shift + Arrow range selection
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-      if (isInput && !e.shiftKey) {
+      if (isInput && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         return;
       }
 
+      e.preventDefault();
+
       if (!currentCell && filteredMasterItems.length > 0) {
-        setCurrentCell({ rIdx: 0, mIdx: 0 });
-        setAnchorCell({ rIdx: 0, mIdx: 0 });
+        const initial = { rIdx: 0, mIdx: 0 };
+        setCurrentCell(initial);
+        setAnchorCell(initial);
         setSelectedCells(new Set([`${filteredMasterItems[0].id}_m1`]));
         return;
       }
 
       if (currentCell) {
-        e.preventDefault();
         let { rIdx, mIdx } = currentCell;
         if (e.key === 'ArrowUp') rIdx = Math.max(0, rIdx - 1);
         if (e.key === 'ArrowDown') rIdx = Math.min(filteredMasterItems.length - 1, rIdx + 1);
@@ -207,11 +223,12 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
         setCurrentCell({ rIdx, mIdx });
 
-        if (e.shiftKey && anchorCell) {
-          const minR = Math.min(anchorCell.rIdx, rIdx);
-          const maxR = Math.max(anchorCell.rIdx, rIdx);
-          const minM = Math.min(anchorCell.mIdx, mIdx);
-          const maxM = Math.max(anchorCell.mIdx, mIdx);
+        const startAnchor = anchorCell || currentCell;
+        if (e.shiftKey) {
+          const minR = Math.min(startAnchor.rIdx, rIdx);
+          const maxR = Math.max(startAnchor.rIdx, rIdx);
+          const minM = Math.min(startAnchor.mIdx, mIdx);
+          const maxM = Math.max(startAnchor.mIdx, mIdx);
 
           const newSelected = new Set<string>();
           for (let ri = minR; ri <= maxR; ri++) {
@@ -265,7 +282,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
         if (cleaned === '') {
           newDrafts[`${targetMaster.id}_${targetMKey}`] = '';
         } else if (!isNaN(Number(cleaned))) {
-          newDrafts[`${targetMaster.id}_${targetMKey}`] = Number(cleaned);
+          newDrafts[`${targetMaster.id}_${targetMKey}`] = Number(Number(cleaned).toFixed(1));
         }
       });
     });
@@ -378,20 +395,25 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       alert('현재 회차는 마감되어 데이터를 수정할 수 없습니다.');
       return;
     }
-    // Allow empty string or valid decimal numbers (optionally up to 1 decimal place or standard numeric typing)
-    if (val !== '' && isNaN(Number(val))) return;
-
-    // If it has decimals, limit to 1 decimal place if user typed more than 1, or just store number
-    let numericVal: number | '' = val === '' ? '' : Number(val);
-    if (typeof numericVal === 'number' && !isNaN(numericVal)) {
-      // round to 1 decimal place if needed or keep as typed
-      const parts = val.split('.');
-      if (parts.length === 2 && parts[1].length > 1) {
-        numericVal = Number(Number(val).toFixed(1));
-      }
+    // Allow empty string, '-', '.', '-.', or valid numbers with at most 1 decimal place (e.g. 1, 1., 1.5, -3, -3.2, .5)
+    if (val !== '' && val !== '-' && val !== '.' && val !== '-.' && !/^-?\d*(\.\d{0,1})?$/.test(val)) {
+      return;
     }
 
-    setDraftValues((prev) => ({ ...prev, [`${masterId}_${monthKey}`]: numericVal }));
+    setDraftValues((prev) => ({ ...prev, [`${masterId}_${monthKey}`]: val }));
+  };
+
+  const handleInputBlur = (masterId: string, monthKey: 'm1' | 'm2' | 'm3' | 'm4' | 'm5') => {
+    const key = `${masterId}_${monthKey}`;
+    const cur = draftValues[key];
+    if (cur !== undefined) {
+      if (cur === '' || cur === '.' || cur === '-' || cur === '-.') {
+        setDraftValues((prev) => ({ ...prev, [key]: '' }));
+      } else if (typeof cur === 'string') {
+        const num = parseFloat(cur);
+        setDraftValues((prev) => ({ ...prev, [key]: isNaN(num) ? '' : Number(num.toFixed(1)) }));
+      }
+    }
   };
 
   const handleReasonInput = (masterId: string, val: string) => {
@@ -411,8 +433,9 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       const val = getCellValue(masterId, monthKeys[idx]);
       const mNum = roundMonths[idx];
       const prevVal = getPrevMonthValue(masterId, mNum);
-      if (val !== '' && prevVal !== null) {
-        if (Math.abs(Number(val) - prevVal) >= 10) {
+      if (val !== '' && val !== '.' && val !== '-' && val !== '-.' && prevVal !== null) {
+        const numVal = Number(val);
+        if (!isNaN(numVal) && Math.abs(numVal - prevVal) >= 10) {
           return true;
         }
       }
@@ -463,7 +486,13 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       monthKeys.forEach((mKey) => {
         const draftKey = `${master.id}_${mKey}`;
         if (draftKey in draftValues) {
-          entry![mKey] = draftValues[draftKey];
+          const rawVal = draftValues[draftKey];
+          if (rawVal === '' || rawVal === '.' || rawVal === '-' || rawVal === '-.') {
+            entry![mKey] = '';
+          } else {
+            const num = Number(rawVal);
+            entry![mKey] = isNaN(num) ? '' : Number(num.toFixed(1));
+          }
         }
       });
 
@@ -843,6 +872,9 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                               disabled={isClosed}
                               value={val}
                               onChange={(e) => handleInputChange(master.id, mKey, e.target.value)}
+                              onBlur={() => handleInputBlur(master.id, mKey)}
+                              onFocus={() => handleCellFocus(rIdx, idx)}
+                              onKeyDown={handleKeyDown}
                               onPaste={(e) => handlePaste(e, master.id, mKey)}
                               placeholder="0"
                               className={`w-24 text-right px-2 py-1 text-xs font-mono font-bold rounded border ${
@@ -865,8 +897,11 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                         const prevVal = getPrevMonthValue(master.id, mNum);
 
                         let diff: number | null = null;
-                        if (val !== '' && prevVal !== null) {
-                          diff = Number(val) - prevVal;
+                        if (val !== '' && val !== '.' && val !== '-' && val !== '-.' && prevVal !== null) {
+                          const numVal = Number(val);
+                          if (!isNaN(numVal)) {
+                            diff = Number((numVal - prevVal).toFixed(1));
+                          }
                         }
 
                         return (
