@@ -1,8 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
 export function getSupabaseConfig(): { url: string; anonKey: string } {
-  const url = (import.meta as any).env?.VITE_SUPABASE_URL || localStorage.getItem('supabase_url') || '';
-  const anonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || localStorage.getItem('supabase_anon_key') || '';
+  let url = (import.meta as any).env?.VITE_SUPABASE_URL || localStorage.getItem('supabase_url') || '';
+  let anonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || localStorage.getItem('supabase_anon_key') || '';
+  
+  if (url === 'YOUR_SUPABASE_URL' || url.includes('your-project') || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+    url = '';
+  }
+  if (anonKey === 'YOUR_SUPABASE_ANON_KEY' || anonKey.length < 20) {
+    anonKey = '';
+  }
   return { url, anonKey };
 }
 

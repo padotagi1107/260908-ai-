@@ -9,7 +9,7 @@ import { GLMasterManagement } from './components/GLMasterManagement';
 import { RoundManagement } from './components/RoundManagement';
 import { UserManagement } from './components/UserManagement';
 import { LoginView } from './components/LoginView';
-import { saveCsvDataToSupabase } from './lib/supabase';
+import { saveCsvDataToSupabase, supabase } from './lib/supabase';
 
 export function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -120,11 +120,18 @@ export function App() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     setIsAuthenticated(false);
     setAuthEmail('');
     localStorage.removeItem('company_platform_auth');
     localStorage.removeItem('company_platform_auth_email');
+    if (supabase) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.warn('Supabase sign out:', err);
+      }
+    }
   };
 
   // 1. Identify the actual logged-in user from authEmail
