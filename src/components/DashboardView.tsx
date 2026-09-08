@@ -11,14 +11,21 @@ interface DashboardViewProps {
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, rounds, masterItems, entries }) => {
-  const [selectedRoundId, setSelectedRoundId] = useState<string>(rounds[0]?.id || '');
+  const [selectedRoundId, setSelectedRoundId] = useState<string>(
+    rounds.length > 0 ? rounds[rounds.length - 1].id : ''
+  );
+
+  React.useEffect(() => {
+    if (!selectedRoundId && rounds.length > 0) {
+      setSelectedRoundId(rounds[rounds.length - 1].id);
+    }
+  }, [rounds, selectedRoundId]);
   
   const isDeptUser = currentUser.role === 'dept_user';
 
-  // Filters matching order: GL계정 / GL계정명 / 세목 / 귀속 / 주관부서 / 담당자 / 차이금액 / 입력상태
+  // Filters matching order: GL계정 / 세목 / 귀속 / 주관부서 / 담당자 / 차이금액 / 입력상태
   const [filterDept, setFilterDept] = useState<string>(isDeptUser ? currentUser.department : 'all');
   const [filterGlCode, setFilterGlCode] = useState<string>('');
-  const [filterGlName, setFilterGlName] = useState<string>('');
   const [filterSubItem, setFilterSubItem] = useState<string>('');
   const [filterAttribution, setFilterAttribution] = useState<string>('');
   const [filterManager, setFilterManager] = useState<string>('');
@@ -40,16 +47,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
     return Array.from(map.values()).sort((a, b) => a.glCode.localeCompare(b.glCode));
   }, [masterItems]);
 
-  const distinctGlNames = useMemo(() => {
-    const map = new Map<string, { glCode: string; glName: string }>();
-    masterItems.forEach((m) => {
-      if (m.glName && !map.has(m.glName)) {
-        map.set(m.glName, { glCode: m.glCode || '', glName: m.glName });
-      }
-    });
-    return Array.from(map.values()).sort((a, b) => a.glName.localeCompare(b.glName));
-  }, [masterItems]);
-
   const distinctSubItems = useMemo(() => {
     return Array.from(new Set(masterItems.map((m) => m.subItem).filter(Boolean))).sort();
   }, [masterItems]);
@@ -68,7 +65,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
 
   const handleResetFilters = () => {
     setFilterGlCode('');
-    setFilterGlName('');
     setFilterSubItem('');
     setFilterAttribution('');
     if (!isDeptUser) setFilterDept('all');
@@ -220,8 +216,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
 
   const filteredMasterItems = masterItems.filter((m) => {
     const matchesDept = !filterDept || filterDept === 'all' || (m.dept || '').toLowerCase().includes(filterDept.toLowerCase());
-    const matchesGl = (m.glCode || '').toLowerCase().includes((filterGlCode || '').toLowerCase());
-    const matchesGlName = (m.glName || '').toLowerCase().includes((filterGlName || '').toLowerCase());
+    const glQuery = (filterGlCode || '').trim().toLowerCase();
+    const matchesGl = !glQuery || (m.glCode || '').toLowerCase().includes(glQuery) || (m.glName || '').toLowerCase().includes(glQuery);
     const matchesSub = (m.subItem || '').toLowerCase().includes((filterSubItem || '').toLowerCase());
     const matchesAttr = !filterAttribution || filterAttribution === 'all' || (m.attribution || '').toLowerCase().includes(filterAttribution.toLowerCase());
     const matchesManager = (m.manager || '').toLowerCase().includes((filterManager || '').toLowerCase());
@@ -264,7 +260,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
     return (
       matchesDept &&
       matchesGl &&
-      matchesGlName &&
       matchesSub &&
       matchesAttr &&
       matchesManager &&
@@ -392,7 +387,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
               </span>
               <div className="flex items-center space-x-3">
                 <span className="text-xs text-slate-400">총 {filteredMasterItems.length}개 항목</span>
-                {(filterGlCode || filterGlName || filterSubItem || filterAttribution || (filterDept !== 'all' && !isDeptUser) || filterManager || filterMinDiff !== '' || filterMaxDiff !== '' || filterStatus !== 'all') && (
+                {(filterGlCode || filterSubItem || filterAttribution || (filterDept !== 'all' && !isDeptUser) || filterManager || filterMinDiff !== '' || filterMaxDiff !== '' || filterStatus !== 'all') && (
                   <button
                     onClick={handleResetFilters}
                     className="text-[11px] text-red-600 hover:text-red-700 font-semibold cursor-pointer underline"
@@ -402,7 +397,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
               <div>
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정</label>
                 <input
@@ -417,25 +412,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
                   {distinctGlAccounts.map((item) => (
                     <option key={item.glCode} value={item.glCode}>
                       {item.glCode} ({item.glName})
-                    </option>
-                  ))}
-                </datalist>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정명</label>
-                <input
-                  type="text"
-                  list="dash-gl-names"
-                  placeholder="계정명 선택/입력..."
-                  value={filterGlName}
-                  onChange={(e) => setFilterGlName(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden"
-                />
-                <datalist id="dash-gl-names">
-                  {distinctGlNames.map((item) => (
-                    <option key={`${item.glName}_${item.glCode}`} value={item.glName}>
-                      {item.glName} ({item.glCode})
                     </option>
                   ))}
                 </datalist>
@@ -561,7 +537,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
             <thead>
               {/* Row 0: Section Group Header */}
               <tr className="bg-[#0F2D59] text-white text-xs font-bold text-center">
-                <th colSpan={6} className="py-2.5 px-3 border-r border-blue-900 text-left">
+                <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 text-left">
                   기본 정보 (백만원)
                 </th>
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#14315F]">
@@ -570,15 +546,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#1B3A6B]">
                   {currentRound?.name || '금번 회차'}
                 </th>
-                <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#102544]">
-                  차이금액 (금번 - 이전)
+                <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#102544] leading-tight">
+                  <div>차이금액</div>
+                  <div className="text-[10px] font-normal text-blue-200 mt-0.5">(+개선, △악화)</div>
                 </th>
                 <th className="py-2.5 px-3 bg-[#0B1D38]">차이사유</th>
               </tr>
 
               {/* Row 1: Year Grouping Header ( 26년, 27년 같이 요약 ) */}
               <tr className="bg-[#1A3865] text-white text-[11px] font-semibold text-center border-b border-blue-900">
-                <th colSpan={6} className="border-r border-blue-900"></th>
+                <th colSpan={5} className="border-r border-blue-900"></th>
                 
                 {/* Prev Round Years */}
                 {yearSpans.map((span, sIdx) => (
@@ -597,17 +574,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
                 {/* Diff Years */}
                 {yearSpans.map((span, sIdx) => (
                   <th key={`diff-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#16335C] py-1`}>
-                    {String(span.year).slice(2)}년 차이
+                    {String(span.year).slice(2)}년
                   </th>
                 ))}
 
                 <th className="bg-[#0F2D59]"></th>
               </tr>
 
-              {/* Row 2: Month Sub-Headers with GL계정 / GL계정명 / 세목 / 귀속 / 주관부서 / 담당자 */}
+              {/* Row 2: Month Sub-Headers with GL계정 / 세목 / 귀속 / 주관부서 / 담당자 */}
               <tr className="bg-slate-100 border-b border-slate-200 text-xs font-semibold text-slate-700 text-center">
                 <th className="py-2 px-3 text-left">GL계정</th>
-                <th className="py-2 px-3 text-left">GL계정명</th>
                 <th className="py-2 px-3 text-left">세목</th>
                 <th className="py-2 px-3 text-left">귀속</th>
                 <th className="py-2 px-3 text-left">주관부서</th>
@@ -640,7 +616,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
             <tbody className="divide-y divide-slate-100 text-sm text-slate-700 font-mono">
               {filteredMasterItems.length === 0 ? (
                 <tr>
-                  <td colSpan={23} className="py-12 text-center text-slate-400 font-sans">
+                  <td colSpan={22} className="py-12 text-center text-slate-400 font-sans">
                     {isDeptUser
                       ? `${currentUser.department} 부서에 조건에 해당하는 데이터가 없습니다.`
                       : '조건에 해당하는 데이터가 없습니다.'}
@@ -656,10 +632,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
                       <td className="py-2.5 px-3 font-semibold text-slate-900 font-mono text-xs">
                         <div>{master.glCode}</div>
                         <div className="text-[11px] font-normal text-slate-500 font-sans truncate max-w-[130px]" title={master.glName}>{master.glName}</div>
-                      </td>
-                      <td className="py-2.5 px-3 font-medium text-slate-800 text-xs">
-                        <div>{master.glName}</div>
-                        <div className="text-[11px] font-mono text-slate-400">{master.glCode}</div>
                       </td>
                       <td className="py-3 px-3 font-medium text-slate-800 text-xs">{master.subItem}</td>
                       <td className="py-3 px-3">

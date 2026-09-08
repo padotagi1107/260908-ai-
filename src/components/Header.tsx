@@ -184,7 +184,7 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <BarChart3 className="w-4 h-4" />
-            <span>종합 대시보드</span>
+            <span>대시보드</span>
           </button>
 
           <button

@@ -21,8 +21,14 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
   onBatchSaveEntries,
 }) => {
   const [selectedRoundId, setSelectedRoundId] = useState<string>(
-    rounds.find((r) => r.status === 'open')?.id || rounds[0]?.id || ''
+    rounds.length > 0 ? rounds[rounds.length - 1].id : ''
   );
+
+  React.useEffect(() => {
+    if (!selectedRoundId && rounds.length > 0) {
+      setSelectedRoundId(rounds[rounds.length - 1].id);
+    }
+  }, [rounds, selectedRoundId]);
 
   const [selectedDept, setSelectedDept] = useState<Department | 'all'>(
     currentUser.role === 'dept_user' ? (currentUser.department || '노경') : 'all'
@@ -30,7 +36,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
   // Search & Filter conditions
   const [filterGlCode, setFilterGlCode] = useState('');
-  const [filterGlName, setFilterGlName] = useState('');
   const [filterSubItem, setFilterSubItem] = useState('');
   const [filterAttribution, setFilterAttribution] = useState('');
   const [filterDept, setFilterDept] = useState<string>('all');
@@ -48,16 +53,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       }
     });
     return Array.from(map.values()).sort((a, b) => a.glCode.localeCompare(b.glCode));
-  }, [masterItems]);
-
-  const distinctGlNames = useMemo(() => {
-    const map = new Map<string, { glCode: string; glName: string }>();
-    masterItems.forEach((m) => {
-      if (m.glName && !map.has(m.glName)) {
-        map.set(m.glName, { glCode: m.glCode || '', glName: m.glName });
-      }
-    });
-    return Array.from(map.values()).sort((a, b) => a.glName.localeCompare(b.glName));
   }, [masterItems]);
 
   const distinctSubItems = useMemo(() => {
@@ -78,7 +73,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
   const handleResetFilters = () => {
     setFilterGlCode('');
-    setFilterGlName('');
     setFilterSubItem('');
     setFilterAttribution('');
     setFilterDept('all');
@@ -384,8 +378,8 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     const matchesUserDept = userDeptCheck === 'all' || !userDeptCheck || m.dept === userDeptCheck;
     const matchesFilterDept = !filterDept || filterDept === 'all' || (m.dept || '').toLowerCase().includes(filterDept.toLowerCase());
 
-    const matchesGl = (m.glCode || '').toLowerCase().includes((filterGlCode || '').toLowerCase());
-    const matchesGlName = (m.glName || '').toLowerCase().includes((filterGlName || '').toLowerCase());
+    const glQuery = (filterGlCode || '').trim().toLowerCase();
+    const matchesGl = !glQuery || (m.glCode || '').toLowerCase().includes(glQuery) || (m.glName || '').toLowerCase().includes(glQuery);
     const matchesSub = (m.subItem || '').toLowerCase().includes((filterSubItem || '').toLowerCase());
     const matchesAttr = !filterAttribution || filterAttribution === 'all' || (m.attribution || '').toLowerCase().includes(filterAttribution.toLowerCase());
     const matchesManager = (m.manager || '').toLowerCase().includes((filterManager || '').toLowerCase());
@@ -430,7 +424,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       matchesUserDept &&
       matchesFilterDept &&
       matchesGl &&
-      matchesGlName &&
       matchesSub &&
       matchesAttr &&
       matchesManager &&
@@ -558,78 +551,60 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
   return (
     <div className="max-w-[98rem] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Top Banner & Selectors */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <div className="flex items-center space-x-2 mb-1">
-            <span className="px-2.5 py-0.5 rounded-md text-[10px] font-bold bg-[#0F2D59] text-white tracking-wide">
-              LX MMA CORPORATE
-            </span>
-            <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-100 text-[#0F2D59]">
-              (백만원)
-            </span>
-          </div>
-          <h2 className="text-xl font-bold text-slate-900">부서별 데이터 입력 및 차이 비교</h2>
-          <p className="text-sm text-slate-500">
-            직전 회차({prevRound ? prevRound.name : '없음'})와 비교하여 5개월치 데이터를 입력하고 차이내역 및 사유를 작성합니다.
-          </p>
+      {/* Selectors & Save Button (Left Aligned) */}
+      <div className="flex flex-wrap items-center justify-start gap-3">
+        <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
+          <span className="text-xs font-semibold text-slate-500">입력 회차:</span>
+          <select
+            value={selectedRoundId}
+            onChange={(e) => {
+              setSelectedRoundId(e.target.value);
+              setDraftValues({});
+            }}
+            className="text-xs font-bold text-[#0F2D59] bg-[#0F2D59]/10 px-2.5 py-1 rounded border border-[#0F2D59]/20 focus:outline-hidden cursor-pointer"
+          >
+            {rounds.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name} ({r.status === 'open' ? '진행중' : '마감됨'})
+              </option>
+            ))}
+          </select>
         </div>
 
-        {/* Round & Dept Selectors & Save Button */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
-            <span className="text-xs font-semibold text-slate-500">입력 회차:</span>
+        <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
+          <span className="text-xs font-semibold text-slate-500">부서:</span>
+          {currentUser.role === 'dept_user' ? (
+            <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded">
+              {currentUser.department} (내 부서)
+            </span>
+          ) : (
             <select
-              value={selectedRoundId}
-              onChange={(e) => {
-                setSelectedRoundId(e.target.value);
-                setDraftValues({});
-              }}
-              className="text-xs font-bold text-[#0F2D59] bg-[#0F2D59]/10 px-2.5 py-1 rounded border border-[#0F2D59]/20 focus:outline-hidden"
+              value={selectedDept}
+              onChange={(e) => setSelectedDept(e.target.value as Department | 'all')}
+              className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded border border-slate-200 focus:outline-hidden cursor-pointer"
             >
-              {rounds.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} ({r.status === 'open' ? '진행중' : '마감됨'})
+              <option value="all">전체 부서 보기</option>
+              {DEPARTMENTS.map((d) => (
+                <option key={d} value={d}>
+                  {d}
                 </option>
               ))}
             </select>
-          </div>
-
-          <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-xs">
-            <span className="text-xs font-semibold text-slate-500">부서:</span>
-            {currentUser.role === 'dept_user' ? (
-              <span className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded">
-                {currentUser.department} (내 부서)
-              </span>
-            ) : (
-              <select
-                value={selectedDept}
-                onChange={(e) => setSelectedDept(e.target.value as Department | 'all')}
-                className="text-xs font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded border border-slate-200 focus:outline-hidden"
-              >
-                <option value="all">전체 부서 보기</option>
-                {DEPARTMENTS.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          <button
-            onClick={handleSaveAll}
-            disabled={isClosed}
-            className={`inline-flex items-center px-4 py-2 rounded-xl font-medium text-xs shadow-xs transition-colors ${
-              isClosed
-                ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                : 'bg-[#0F2D59] text-white hover:bg-[#1B365D]'
-            }`}
-          >
-            <Save className="w-4 h-4 mr-1.5" />
-            저장하기
-          </button>
+          )}
         </div>
+
+        <button
+          onClick={handleSaveAll}
+          disabled={isClosed}
+          className={`inline-flex items-center px-4 py-2 rounded-xl font-medium text-xs shadow-xs transition-colors cursor-pointer ${
+            isClosed
+              ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+              : 'bg-[#0F2D59] text-white hover:bg-[#1B365D]'
+          }`}
+        >
+          <Save className="w-4 h-4 mr-1.5" />
+          저장하기
+        </button>
       </div>
 
       {/* Status Warning Banner */}
@@ -672,7 +647,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
           </span>
           <div className="flex items-center space-x-3">
             <span className="text-xs text-slate-400">총 {filteredMasterItems.length}개 항목</span>
-            {(filterGlCode || filterGlName || filterSubItem || filterAttribution || filterDept !== 'all' || filterManager || filterMinDiff !== '' || filterMaxDiff !== '' || filterStatus !== 'all') && (
+            {(filterGlCode || filterSubItem || filterAttribution || filterDept !== 'all' || filterManager || filterMinDiff !== '' || filterMaxDiff !== '' || filterStatus !== 'all') && (
               <button
                 onClick={handleResetFilters}
                 className="text-[11px] text-red-600 hover:text-red-700 font-semibold cursor-pointer underline"
@@ -682,7 +657,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
             )}
           </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정</label>
             <input
@@ -697,25 +672,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
               {distinctGlAccounts.map((item) => (
                 <option key={item.glCode} value={item.glCode}>
                   {item.glCode} ({item.glName})
-                </option>
-              ))}
-            </datalist>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정명</label>
-            <input
-              type="text"
-              list="entry-gl-names"
-              placeholder="계정명 선택/입력..."
-              value={filterGlName}
-              onChange={(e) => setFilterGlName(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
-            />
-            <datalist id="entry-gl-names">
-              {distinctGlNames.map((item) => (
-                <option key={`${item.glName}_${item.glCode}`} value={item.glName}>
-                  {item.glName} ({item.glCode})
                 </option>
               ))}
             </datalist>
@@ -833,7 +789,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
             <thead>
               {/* Row 0: Section Group Header */}
               <tr className="bg-[#0F2D59] text-white text-xs font-bold text-center">
-                <th colSpan={6} className="py-2.5 px-3 border-r border-blue-900 text-left">
+                <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 text-left">
                   기본 정보 (백만원)
                 </th>
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#14315F]">
@@ -842,15 +798,16 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#1B3A6B]">
                   {currentRound?.name || '금번 회차'}
                 </th>
-                <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#102544]">
-                  차이금액 (금번 - 이전)
+                <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#102544] leading-tight">
+                  <div>차이금액</div>
+                  <div className="text-[10px] font-normal text-blue-200 mt-0.5">(+개선, △악화)</div>
                 </th>
                 <th className="py-2.5 px-3 bg-[#0B1D38]">차이사유</th>
               </tr>
 
               {/* Row 1: Year Grouping Header ( 26년, 27년 같이 요약 ) */}
               <tr className="bg-[#1A3865] text-white text-[11px] font-semibold text-center border-b border-blue-900">
-                <th colSpan={6} className="border-r border-blue-900"></th>
+                <th colSpan={5} className="border-r border-blue-900"></th>
                 
                 {yearSpans.map((span, sIdx) => (
                   <th key={`prev-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#1F4075] py-1`}>
@@ -866,17 +823,16 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
                 {yearSpans.map((span, sIdx) => (
                   <th key={`diff-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#16335C] py-1`}>
-                    {String(span.year).slice(2)}년 차이
+                    {String(span.year).slice(2)}년
                   </th>
                 ))}
 
                 <th className="bg-[#0F2D59]"></th>
               </tr>
 
-              {/* Row 2: Month Sub-Headers with GL계정 / GL계정명 / 세목 / 귀속 / 주관부서 / 담당자 */}
+              {/* Row 2: Month Sub-Headers with GL계정 / 세목 / 귀속 / 주관부서 / 담당자 */}
               <tr className="bg-slate-100 border-b border-slate-200 text-xs font-semibold text-slate-700 text-center">
                 <th className="py-2 px-3 text-left">GL계정</th>
-                <th className="py-2 px-3 text-left">GL계정명</th>
                 <th className="py-2 px-3 text-left">세목</th>
                 <th className="py-2 px-3 text-left">귀속</th>
                 <th className="py-2 px-3 text-left">주관부서</th>
@@ -909,7 +865,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
             <tbody className="divide-y divide-slate-100 text-sm text-slate-700">
               {filteredMasterItems.length === 0 ? (
                 <tr>
-                  <td colSpan={23} className="py-12 text-center text-slate-400 font-sans">
+                  <td colSpan={22} className="py-12 text-center text-slate-400 font-sans">
                     조건에 해당하는 마스터 항목이 없습니다.
                   </td>
                 </tr>
@@ -924,10 +880,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                       <td className="py-2.5 px-3 font-semibold text-slate-900 font-mono text-xs">
                         <div>{master.glCode}</div>
                         <div className="text-[11px] font-normal text-slate-500 font-sans truncate max-w-[130px]" title={master.glName}>{master.glName}</div>
-                      </td>
-                      <td className="py-2.5 px-3 font-medium text-slate-800 text-xs">
-                        <div>{master.glName}</div>
-                        <div className="text-[11px] font-mono text-slate-400">{master.glCode}</div>
                       </td>
                       <td className="py-3 px-3 font-medium text-slate-800 text-xs">{master.subItem}</td>
                       <td className="py-3 px-3">
