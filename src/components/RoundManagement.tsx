@@ -17,6 +17,9 @@ import {
   History,
   AlertTriangle,
   Check,
+  Settings,
+  FileText,
+  RotateCcw,
 } from 'lucide-react';
 
 interface RoundManagementProps {
@@ -38,6 +41,63 @@ interface EmailRecipient {
   totalCount: number;
 }
 
+export interface EmailTemplateConfig {
+  subject: string;
+  body: string;
+}
+
+export interface EmailTemplatesState {
+  request: EmailTemplateConfig;
+  remind: EmailTemplateConfig;
+}
+
+export const DEFAULT_EMAIL_TEMPLATES: EmailTemplatesState = {
+  request: {
+    subject: '[LX MMA 제조고정비 선행추정] {roundName} 자료 입력 및 취합 요청 안내',
+    body:
+`안녕하세요, LX MMA 제조고정비 선행추정 각 부서 담당자 여러분.
+
+{roundName} 제조고정비 5개월 선행추정 자료 입력 및 취합을 아래와 같이 요청드리오니, 정해진 기한 내에 입력을 완료하여 주시기 바랍니다.
+
+■ 대상 회차: {roundName} (회차 ID: {roundId})
+■ 입력 기간: {startDate} ~ {endDate} 18:00
+■ 대상 부서: 노경, 환경안전, IT보안팀, 구매, 기술팀 전 부서
+■ 입력 항목: 5개월치 제조고정비 월별 추정 금액 및 직전 회차 대비 주요 증감 사유
+■ 시스템 접속: LX MMA 제조고정비 선행추정 관리 시스템 (상단 '자료 입력' 탭)
+
+※ 원활한 전사 결산 및 경영계획 수립을 위하여 입력 기한을 엄수해 주시기 바라며, 입력 마감 이후에는 시스템이 잠금 처리되어 수정이 불가하오니 유의하시기 바랍니다.
+
+감사합니다.
+(발신: 제조고정비 총괄 운영자)`,
+  },
+  remind: {
+    subject: '[긴급 리마인드] {roundName} 제조고정비 선행추정 미작성분 입력 요청',
+    body:
+`안녕하세요, LX MMA 선행추정 담당자님.
+
+현재 {roundName} 제조고정비 선행추정 입력 마감일({endDate})이 임박하였으나, 아직 미작성된 항목이 확인되어 긴급 리마인드 드립니다.
+
+■ 대상 회차: {roundName} (마감 일시: {endDate} 18:00)
+■ 조치 요청 사항:
+  - 시스템 접속 후 소속 부서의 미입력된 월별 추정 금액을 즉시 입력해 주십시오.
+  - 직전 회차 대비 변동 금액이 큰 항목은 필히 [차이사유]를 기재해 주시기 바랍니다.
+■ 마감 후 조치: 기한 이후에는 회차가 마감(잠금)되어 추가 등록 및 수정이 불가합니다.
+
+신속한 입력 협조를 간곡히 부탁드립니다.
+
+감사합니다.
+(발신: 제조고정비 총괄 운영자)`,
+  },
+};
+
+export const resolveEmailTemplate = (template: string, round: Round): string => {
+  return template
+    .replace(/{roundName}/g, round.name)
+    .replace(/{roundId}/g, round.id)
+    .replace(/{startDate}/g, round.startDate)
+    .replace(/{endDate}/g, round.endDate);
+};
+
 export const RoundManagement: React.FC<RoundManagementProps> = ({
   rounds,
   users = [],
@@ -53,6 +113,35 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
   const [name, setName] = useState<string>('9월 1차');
   const [startDate, setStartDate] = useState<string>('2026-09-01');
   const [endDate, setEndDate] = useState<string>('2026-09-15');
+
+  // Email Templates State (Fixed/Configured by operator)
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplatesState>(() => {
+    try {
+      const saved = localStorage.getItem('company_email_templates');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          request: {
+            subject: parsed.request?.subject || DEFAULT_EMAIL_TEMPLATES.request.subject,
+            body: parsed.request?.body || DEFAULT_EMAIL_TEMPLATES.request.body,
+          },
+          remind: {
+            subject: parsed.remind?.subject || DEFAULT_EMAIL_TEMPLATES.remind.subject,
+            body: parsed.remind?.body || DEFAULT_EMAIL_TEMPLATES.remind.body,
+          },
+        };
+      }
+    } catch {
+      // fallback to default
+    }
+    return DEFAULT_EMAIL_TEMPLATES;
+  });
+
+  // Template Management Modal States
+  const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
+  const [templateModalType, setTemplateModalType] = useState<'request' | 'remind'>('request');
+  const [editingTemplates, setEditingTemplates] = useState<EmailTemplatesState>(DEFAULT_EMAIL_TEMPLATES);
+  const [templateSaveSuccess, setTemplateSaveSuccess] = useState(false);
 
   // Email Modal States
   const [emailModalRound, setEmailModalRound] = useState<Round | null>(null);
@@ -102,6 +191,36 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
     setIsModalOpen(false);
   };
 
+  // Open Template Management Modal
+  const handleOpenTemplateModal = () => {
+    setEditingTemplates(JSON.parse(JSON.stringify(emailTemplates)));
+    setTemplateModalType('request');
+    setTemplateSaveSuccess(false);
+    setIsTemplateModalOpen(true);
+  };
+
+  // Save Configured Templates
+  const handleSaveTemplates = () => {
+    setEmailTemplates(editingTemplates);
+    localStorage.setItem('company_email_templates', JSON.stringify(editingTemplates));
+    setTemplateSaveSuccess(true);
+    setTimeout(() => {
+      setTemplateSaveSuccess(false);
+      setIsTemplateModalOpen(false);
+    }, 700);
+  };
+
+  // Reset Template to Default
+  const handleResetTemplateToDefault = (type: 'request' | 'remind') => {
+    const label = type === 'request' ? '취합 요청 메일' : 'Remind 메일';
+    if (confirm(`'${label}'의 문구를 초기 기본값으로 복원하시겠습니까?`)) {
+      setEditingTemplates((prev) => ({
+        ...prev,
+        [type]: { ...DEFAULT_EMAIL_TEMPLATES[type] },
+      }));
+    }
+  };
+
   // Compile full manager list with uncompleted item stats for the active email round
   const allManagersStatus: EmailRecipient[] = useMemo(() => {
     if (!emailModalRound) return [];
@@ -138,7 +257,7 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
           typeof entry.m5 === 'number');
 
       // Find matching user by name or department
-      let matchedUser = users.find(
+      const matchedUser = users.find(
         (u) => u.name === m.manager || (u.department === m.dept && u.role === 'dept_user')
       );
 
@@ -189,19 +308,10 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
     });
     setSelectedRecipientIds(initialChecked);
 
-    // Default template for 'request'
-    setEmailSubject(`[LX MMA 제조고정비 선행추정] ${round.name} 자료 입력 및 취합 요청 안내`);
-    setEmailBody(
-      `안녕하세요, LX MMA 제조고정비 선행추정 각 부서 담당자 여러분.\n\n` +
-        `${round.name} 제조고정비 5개월 선행추정 자료 입력 및 취합을 아래와 같이 요청드리오니, 정해진 기한 내에 입력을 완료하여 주시기 바랍니다.\n\n` +
-        `■ 대상 회차: ${round.name} (회차 ID: ${round.id})\n` +
-        `■ 입력 기간: ${round.startDate} ~ ${round.endDate} 18:00\n` +
-        `■ 대상 부서: 노경, 환경안전, IT보안팀, 구매, 기술팀 전 부서\n` +
-        `■ 입력 항목: 5개월치 제조고정비 월별 추정 금액 및 직전 회차 대비 주요 증감 사유\n` +
-        `■ 시스템 접속: LX MMA 제조고정비 선행추정 관리 시스템 (상단 '자료 입력' 탭)\n\n` +
-        `※ 원활한 전사 결산 및 경영계획 수립을 위하여 입력 기한을 엄수해 주시기 바라며, 입력 마감 이후에는 시스템이 잠금 처리되어 수정이 불가하오니 유의하시기 바랍니다.\n\n` +
-        `감사합니다.\n(발신: 제조고정비 총괄 운영자)`
-    );
+    // Load configured template for 'request'
+    const templ = emailTemplates.request;
+    setEmailSubject(resolveEmailTemplate(templ.subject, round));
+    setEmailBody(resolveEmailTemplate(templ.body, round));
   };
 
   // Switch between 'request' and 'remind' modes
@@ -220,33 +330,18 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
     });
     setSelectedRecipientIds(checked);
 
-    if (type === 'request') {
-      setEmailSubject(`[LX MMA 제조고정비 선행추정] ${round.name} 자료 입력 및 취합 요청 안내`);
-      setEmailBody(
-        `안녕하세요, LX MMA 제조고정비 선행추정 각 부서 담당자 여러분.\n\n` +
-          `${round.name} 제조고정비 5개월 선행추정 자료 입력 및 취합을 아래와 같이 요청드리오니, 정해진 기한 내에 입력을 완료하여 주시기 바랍니다.\n\n` +
-          `■ 대상 회차: ${round.name} (회차 ID: ${round.id})\n` +
-          `■ 입력 기간: ${round.startDate} ~ ${round.endDate} 18:00\n` +
-          `■ 대상 부서: 노경, 환경안전, IT보안팀, 구매, 기술팀 전 부서\n` +
-          `■ 입력 항목: 5개월치 제조고정비 월별 추정 금액 및 직전 회차 대비 주요 증감 사유\n` +
-          `■ 시스템 접속: LX MMA 제조고정비 선행추정 관리 시스템 (상단 '자료 입력' 탭)\n\n` +
-          `※ 원활한 전사 결산 및 경영계획 수립을 위하여 입력 기한을 엄수해 주시기 바랍니다.\n\n` +
-          `감사합니다.\n(발신: 제조고정비 총괄 운영자)`
-      );
-    } else {
-      setEmailSubject(`[긴급 리마인드] ${round.name} 제조고정비 선행추정 미작성분 입력 요청`);
-      setEmailBody(
-        `안녕하세요, LX MMA 선행추정 담당자님.\n\n` +
-          `현재 ${round.name} 제조고정비 선행추정 입력 마감일(${round.endDate})이 임박하였으나, 아직 미작성된 항목이 확인되어 긴급 리마인드 드립니다.\n\n` +
-          `■ 대상 회차: ${round.name} (마감 일시: ${round.endDate} 18:00)\n` +
-          `■ 조치 요청 사항:\n` +
-          `  - 시스템 접속 후 소속 부서의 미입력된 월별 추정 금액을 즉시 입력해 주십시오.\n` +
-          `  - 직전 회차 대비 변동 금액이 큰 항목은 필히 [차이사유]를 기재해 주시기 바랍니다.\n` +
-          `■ 마감 후 조치: 기한 이후에는 회차가 마감(잠금)되어 추가 등록 및 수정이 불가합니다.\n\n` +
-          `신속한 입력 협조를 간곡히 부탁드립니다.\n\n` +
-          `감사합니다.\n(발신: 제조고정비 총괄 운영자)`
-      );
-    }
+    // Apply configured template
+    const templ = emailTemplates[type];
+    setEmailSubject(resolveEmailTemplate(templ.subject, round));
+    setEmailBody(resolveEmailTemplate(templ.body, round));
+  };
+
+  // Reset/reload current email subject and body from saved template
+  const handleReloadSavedTemplate = () => {
+    if (!emailModalRound) return;
+    const templ = emailTemplates[emailType];
+    setEmailSubject(resolveEmailTemplate(templ.subject, emailModalRound));
+    setEmailBody(resolveEmailTemplate(templ.body, emailModalRound));
   };
 
   // Toggle recipient selection
@@ -395,6 +490,7 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Header Bar */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-900">입력 회차 생성 및 마감 관리</h2>
@@ -402,13 +498,24 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
             월별 2회씩 입력 회차(예: 9-1, 9-2)를 생성하고 마감 처리하며, 회차별로 담당자 취합 요청 및 리마인드 이메일을 발송합니다.
           </p>
         </div>
-        <button
-          onClick={handleOpenAdd}
-          className="inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-blue-600 text-white font-medium text-sm hover:bg-blue-700 shadow-sm transition-colors cursor-pointer"
-        >
-          <Plus className="w-4 h-4 mr-1.5" />
-          새 회차 생성
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* 이메일 문구 설정 버튼 */}
+          <button
+            onClick={handleOpenTemplateModal}
+            className="inline-flex items-center justify-center px-3.5 py-2.5 rounded-lg bg-white border border-slate-300 text-slate-700 font-semibold text-xs sm:text-sm hover:bg-slate-50 hover:text-slate-900 shadow-2xs transition-colors cursor-pointer"
+            title="취합 요청 및 Remind 메일의 기본 제목과 본문 문구를 고정 및 설정합니다"
+          >
+            <Settings className="w-4 h-4 mr-1.5 text-slate-500" />
+            이메일 문구 설정
+          </button>
+          <button
+            onClick={handleOpenAdd}
+            className="inline-flex items-center justify-center px-4 py-2.5 rounded-lg bg-blue-600 text-white font-medium text-xs sm:text-sm hover:bg-blue-700 shadow-sm transition-colors cursor-pointer"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            새 회차 생성
+          </button>
+        </div>
       </div>
 
       {/* Rounds Table with Rightmost Email Column */}
@@ -552,7 +659,7 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
               </button>
             </div>
 
-            {/* Email Type Selection Tabs (① 취합 요청 메일 발송 / ② Remind 메일 발송) */}
+            {/* Email Type Selection Tabs (① 취합 요청 메일 / ② Remind 메일) */}
             <div className="p-6 space-y-5">
               <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 rounded-xl border border-slate-200">
                 <button
@@ -565,7 +672,7 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
                   }`}
                 >
                   <Users className="w-4 h-4" />
-                  <span>① 취합 요청 메일 발송 (담당자 전체)</span>
+                  <span>① 취합 요청 메일</span>
                 </button>
                 <button
                   type="button"
@@ -577,7 +684,7 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
                   }`}
                 >
                   <Clock className="w-4 h-4" />
-                  <span>② Remind 메일 발송 (해당 차수 미작성자)</span>
+                  <span>② Remind 메일</span>
                 </button>
               </div>
 
@@ -603,7 +710,7 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
                     </label>
                     <span className="text-[11px] text-slate-400">
                       {emailType === 'request'
-                        ? '전 부서 등록 담당자 전체'
+                        ? '전 부서 등록 담당자'
                         : '해당 회차 미작성 항목이 있는 담당자'}
                     </span>
                   </div>
@@ -681,11 +788,22 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
                 )}
               </div>
 
-              {/* Subject Field */}
+              {/* Subject Field with Template Reload button */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  이메일 제목
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700">
+                    이메일 제목
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleReloadSavedTemplate}
+                    className="text-[11px] text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 cursor-pointer"
+                    title="설정된 기본 문구로 본문과 제목을 다시 채웁니다"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>기본 문구 불러오기</span>
+                  </button>
+                </div>
                 <input
                   type="text"
                   value={emailSubject}
@@ -785,6 +903,173 @@ export const RoundManagement: React.FC<RoundManagementProps> = ({
                   )}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Email Template Management Modal (이메일 문구 설정) */}
+      {isTemplateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150 my-8">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 rounded-xl bg-[#0F2D59] text-white shadow-xs">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    이메일 발송 문구 설정
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    회차별 취합 요청 및 Remind 메일의 기본 제목과 본문 문구를 고정 및 관리합니다.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsTemplateModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Tabs for Template Types */}
+              <div className="grid grid-cols-2 gap-3 p-1 bg-slate-100 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setTemplateModalType('request')}
+                  className={`py-2.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                    templateModalType === 'request'
+                      ? 'bg-white text-[#0F2D59] shadow-xs border border-slate-200'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Users className="w-4 h-4" />
+                  <span>① 취합 요청 메일</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTemplateModalType('remind')}
+                  className={`py-2.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                    templateModalType === 'remind'
+                      ? 'bg-white text-rose-700 shadow-xs border border-rose-200'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Clock className="w-4 h-4" />
+                  <span>② Remind 메일</span>
+                </button>
+              </div>
+
+              {/* Status Alert */}
+              {templateSaveSuccess && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center space-x-2">
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>이메일 문구 설정이 성공적으로 저장되었습니다.</span>
+                </div>
+              )}
+
+              {/* Variable info guide */}
+              <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 text-xs text-slate-700">
+                <div className="font-bold text-[#0F2D59] mb-1 flex items-center space-x-1.5">
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>자동 치환 변수 안내</span>
+                </div>
+                <p className="text-[11px] text-slate-600 mb-2">
+                  제목과 본문에 아래 치환자를 입력하면, 회차별 발송 시 실제 해당 회차 정보로 자동 치환되어 적용됩니다.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="px-2 py-0.5 rounded bg-white border border-blue-200 font-mono text-[11px] font-bold text-[#0F2D59]">
+                    {'{roundName}'} : 회차명 (예: 9월 1차)
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-white border border-blue-200 font-mono text-[11px] font-bold text-[#0F2D59]">
+                    {'{roundId}'} : 회차 ID (예: 9-1)
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-white border border-blue-200 font-mono text-[11px] font-bold text-[#0F2D59]">
+                    {'{startDate}'} : 시작일
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-white border border-blue-200 font-mono text-[11px] font-bold text-[#0F2D59]">
+                    {'{endDate}'} : 마감일
+                  </span>
+                </div>
+              </div>
+
+              {/* Subject Input */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  기본 이메일 제목
+                </label>
+                <input
+                  type="text"
+                  value={editingTemplates[templateModalType].subject}
+                  onChange={(e) =>
+                    setEditingTemplates((prev) => ({
+                      ...prev,
+                      [templateModalType]: {
+                        ...prev[templateModalType],
+                        subject: e.target.value,
+                      },
+                    }))
+                  }
+                  className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59]"
+                  placeholder="기본 이메일 제목을 입력하세요..."
+                />
+              </div>
+
+              {/* Body Textarea */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  기본 이메일 본문
+                </label>
+                <textarea
+                  rows={9}
+                  value={editingTemplates[templateModalType].body}
+                  onChange={(e) =>
+                    setEditingTemplates((prev) => ({
+                      ...prev,
+                      [templateModalType]: {
+                        ...prev[templateModalType],
+                        body: e.target.value,
+                      },
+                    }))
+                  }
+                  className="w-full px-3 py-2.5 text-xs font-mono bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#0F2D59] leading-relaxed resize-y"
+                  placeholder="기본 이메일 본문 내용을 입력하세요..."
+                />
+              </div>
+
+              {/* Footer Actions */}
+              <div className="pt-3 flex items-center justify-between border-t border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => handleResetTemplateToDefault(templateModalType)}
+                  className="inline-flex items-center px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                  기본 문구로 초기화
+                </button>
+
+                <div className="flex items-center space-x-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsTemplateModalOpen(false)}
+                    className="px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                  >
+                    닫기
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveTemplates}
+                    className="inline-flex items-center px-4 py-2 text-xs font-bold bg-[#0F2D59] hover:bg-[#183B6B] text-white rounded-lg shadow-sm transition-colors cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5 mr-1.5" />
+                    문구 설정 저장
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
