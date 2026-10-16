@@ -9,7 +9,13 @@ import { GLMasterManagement } from './components/GLMasterManagement';
 import { RoundManagement } from './components/RoundManagement';
 import { UserManagement } from './components/UserManagement';
 import { LoginView } from './components/LoginView';
-import { saveCsvDataToSupabase, supabase } from './lib/supabase';
+import {
+  saveCsvDataToSupabase,
+  supabase,
+  syncUserToSupabase,
+  deleteUserFromSupabase,
+  fetchAuthorizedUsersFromSupabase,
+} from './lib/supabase';
 
 export function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -83,6 +89,53 @@ export function App() {
     localStorage.setItem('company_platform_entries', JSON.stringify(entries));
   }, [entries]);
 
+  // Synchronize registered users with Supabase authorized_users table
+  useEffect(() => {
+    let isMounted = true;
+    const syncUsersFromRemote = async () => {
+      try {
+        const remoteUsers = await fetchAuthorizedUsersFromSupabase();
+        if (remoteUsers && remoteUsers.length > 0 && isMounted) {
+          setUsers((prevUsers) => {
+            let changed = false;
+            const updated = [...prevUsers];
+            remoteUsers.forEach((ru: any) => {
+              const email = (ru.email || '').trim().toLowerCase();
+              if (!email) return;
+              const idx = updated.findIndex((u) => u.email.trim().toLowerCase() === email);
+              const role: 'operator' | 'dept_user' = ru.role === 'admin' ? 'operator' : 'dept_user';
+              const dept = role === 'operator' ? undefined : (ru.department as Department);
+
+              if (idx >= 0) {
+                // If remote has valid department, align with remote
+                if (dept && updated[idx].department !== dept) {
+                  updated[idx] = { ...updated[idx], department: dept, role };
+                  changed = true;
+                }
+              } else {
+                updated.push({
+                  id: `usr-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+                  name: ru.name || email.split('@')[0],
+                  email: ru.email,
+                  role: role,
+                  department: dept,
+                });
+                changed = true;
+              }
+            });
+            return changed ? updated : prevUsers;
+          });
+        }
+      } catch (err) {
+        console.warn('Initial remote users sync notice:', err);
+      }
+    };
+    syncUsersFromRemote();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleLoginSuccess = (email: string, name: string, role?: string, department?: string) => {
     setIsAuthenticated(true);
     setAuthEmail(email);
@@ -98,22 +151,48 @@ export function App() {
     // Sync with users list
     const existingIndex = users.findIndex((u) => u.email.toLowerCase() === email.toLowerCase());
     if (existingIndex >= 0) {
+      const existingUser = users[existingIndex];
+      // 운영자가 기등록한 부서를 최우선 보존 (존재하지 않을 때만 전달받은 department 또는 기본값)
+      const finalDept: Department | undefined = isOperator
+        ? undefined
+        : (existingUser.department || (department as Department) || '노경');
+
       const updatedUsers = [...users];
       updatedUsers[existingIndex] = {
-        ...updatedUsers[existingIndex],
-        name: name || updatedUsers[existingIndex].name,
-        role: isOperator ? 'operator' : 'dept_user',
-        department: isOperator ? undefined : ((department as Department) || updatedUsers[existingIndex].department || '노경'),
+        ...existingUser,
+        name: name || existingUser.name,
+        role: isOperator ? 'operator' : (existingUser.role || 'dept_user'),
+        department: finalDept,
       };
       setUsers(updatedUsers);
       setCurrentUserId(updatedUsers[existingIndex].id);
     } else {
+      // 신규 사용자인 경우:
+      // 1) 전달받은 department (authorized_users 테이블 등에서 조회된 부서)
+      // 2) 마스터 데이터(masterItems)에서 담당자 이메일이나 이름으로 매핑된 부서
+      // 3) 그래도 없으면 '노경'
+      let determinedDept = department as Department | undefined;
+      if (!determinedDept && !isOperator) {
+        const matchedMaster = masterItems.find(
+          (m) =>
+            m.manager &&
+            (email.toLowerCase().includes(m.manager.toLowerCase()) ||
+              (name && m.manager.trim() === name.trim()))
+        );
+        if (matchedMaster?.dept) {
+          determinedDept = matchedMaster.dept;
+        }
+      }
+      if (!determinedDept && !isOperator) {
+        determinedDept = '노경';
+      }
+
       const newUser: UserProfile = {
         id: `usr-${Date.now()}`,
         name: name || email.split('@')[0],
         email: email,
         role: isOperator ? 'operator' : 'dept_user',
-        department: isOperator ? undefined : (department as Department) || '노경',
+        department: isOperator ? undefined : determinedDept,
       };
       setUsers((prev) => [...prev, newUser]);
       setCurrentUserId(newUser.id);
@@ -232,14 +311,17 @@ export function App() {
   const handleAddUser = (user: Omit<UserProfile, 'id'>) => {
     const newUser: UserProfile = { ...user, id: `usr-${Date.now()}` };
     setUsers([...users, newUser]);
+    syncUserToSupabase(newUser);
   };
 
   const handleUpdateUser = (updated: UserProfile) => {
     setUsers(users.map((u) => (u.id === updated.id ? updated : u)));
+    syncUserToSupabase(updated);
   };
 
   const handleDeleteUser = (userId: string) => {
-    if (userId === currentUserId || users.find((u) => u.id === userId)?.email.toLowerCase() === authEmail.toLowerCase()) {
+    const target = users.find((u) => u.id === userId);
+    if (userId === currentUserId || target?.email.toLowerCase() === authEmail.toLowerCase()) {
       alert('현재 로그인 중인 계정은 삭제할 수 없습니다.');
       return;
     }
@@ -248,6 +330,9 @@ export function App() {
       return;
     }
     setUsers(users.filter((u) => u.id !== userId));
+    if (target?.email) {
+      deleteUserFromSupabase(target.email);
+    }
   };
 
   // Entry Handlers

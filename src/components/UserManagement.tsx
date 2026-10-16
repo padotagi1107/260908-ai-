@@ -80,6 +80,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
           <p className="text-sm text-slate-500">
             운영자 및 부서별 담당자를 등록하고, 해당 부서의 데이터 입력 및 수정 권한을 제어합니다.
           </p>
+          <p className="text-xs text-blue-600 mt-1 font-medium">
+            ※ 등록된 사용자의 부서는 Supabase와 실시간 동기화되며, Supabase Auth에서 신규 ID 생성 후 로그인 시에도 운영자가 설정한 담당 부서가 안전하게 유지됩니다.
+          </p>
         </div>
         <button
           onClick={handleOpenAdd}
@@ -261,6 +264,9 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                       </option>
                     ))}
                   </select>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    * 사용자가 Supabase Auth에서 신규 ID로 로그인할 때 여기서 등록한 부서가 기본 부서로 유지됩니다.
+                  </p>
                 </div>
               )}
 

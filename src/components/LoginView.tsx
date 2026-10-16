@@ -137,10 +137,10 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
 
       if (data?.user) {
         let userName = data.user.user_metadata?.name || cleanEmail.split('@')[0];
-        let userDept = data.user.user_metadata?.department || '노경';
-        let userRole = data.user.user_metadata?.role || (cleanEmail.includes('admin') || cleanEmail.includes('operator') ? 'operator' : 'dept_user');
+        let userDept = data.user.user_metadata?.department; // Do not force '노경'
+        let userRole = data.user.user_metadata?.role;
 
-        // Check authorized_users table in Supabase
+        // 1. Check authorized_users table in Supabase
         try {
           const { data: authUser } = await supabase
             .from('authorized_users')
@@ -150,11 +150,63 @@ export function LoginView({ onLoginSuccess }: LoginViewProps) {
 
           if (authUser) {
             userName = authUser.name || userName;
-            userDept = authUser.department || userDept;
-            userRole = authUser.role === 'admin' ? 'operator' : authUser.role;
+            if (authUser.department) {
+              userDept = authUser.department;
+            }
+            if (authUser.role) {
+              userRole = authUser.role === 'admin' ? 'operator' : authUser.role;
+            }
           }
         } catch (dbErr) {
           console.warn('authorized_users lookup notice:', dbErr);
+        }
+
+        // 2. If department is still not determined, check operator-registered users in localStorage
+        if (!userDept) {
+          try {
+            const savedUsersStr = localStorage.getItem('company_platform_users');
+            if (savedUsersStr) {
+              const localUsers = JSON.parse(savedUsersStr);
+              const matchedLocal = localUsers.find(
+                (u: any) => u.email && u.email.trim().toLowerCase() === cleanEmail
+              );
+              if (matchedLocal) {
+                if (matchedLocal.department) {
+                  userDept = matchedLocal.department;
+                }
+                if (matchedLocal.name && (!userName || userName === cleanEmail.split('@')[0])) {
+                  userName = matchedLocal.name;
+                }
+                if (matchedLocal.role && !userRole) {
+                  userRole = matchedLocal.role;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('Local users lookup failed:', e);
+          }
+        }
+
+        // 3. If department is still not determined, check master table managers
+        if (!userDept) {
+          try {
+            const savedMastersStr = localStorage.getItem('company_platform_masters');
+            if (savedMastersStr) {
+              const localMasters = JSON.parse(savedMastersStr);
+              const matchedMaster = localMasters.find(
+                (m: any) => m.manager && (cleanEmail.includes(m.manager.toLowerCase()) || (userName && m.manager === userName))
+              );
+              if (matchedMaster?.dept) {
+                userDept = matchedMaster.dept;
+              }
+            }
+          } catch (e) {
+            console.warn('Local masters lookup failed:', e);
+          }
+        }
+
+        if (!userRole) {
+          userRole = (cleanEmail.includes('admin') || cleanEmail.includes('operator')) ? 'operator' : 'dept_user';
         }
 
         setSuccessMessage(`로그인 성공! [${userName}]님 환영합니다.`);
@@ -196,7 +248,7 @@ create table if not exists public.authorized_users (
   email text unique not null,
   name text not null,
   department text not null,
-  role text check (role in ('admin', 'manager', 'viewer')) default 'manager',
+  role text check (role in ('admin', 'manager', 'viewer', 'operator', 'dept_user')) default 'manager',
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
