@@ -143,17 +143,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
     if (prevMonthIdx === -1) return null;
 
     const prevEntry = prevRoundEntries.find((e) => e.masterId === masterId);
-    if (!prevEntry) return 0; // 지난추정값이 없더라도 0으로 간주하여 계산 가능하게 함
+    if (!prevEntry) return null;
 
     const keys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
     const key = keys[prevMonthIdx];
     const val = prevEntry[key];
-    if (val === '' || val === null || val === undefined) return 0;
+    if (val === '' || val === null || val === undefined) return null;
     const num = Number(val);
-    return isNaN(num) ? 0 : num;
+    return isNaN(num) ? null : num;
   };
 
-  // Calculate department totals & completion counts based on managers
+  // Calculate department totals & completion counts based on managers (all 5 months required)
   const deptSummary = DEPARTMENTS.map((dept) => {
     const deptMasters = masterItems.filter((m) => m.dept === dept);
     const totalCount = deptMasters.length;
@@ -165,17 +165,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
     const completedMgrList: string[] = [];
     const pendingMgrList: string[] = [];
 
+    const mKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+
     managers.forEach((mgr) => {
       const mgrMasters = deptMasters.filter((m) => m.manager === mgr);
       const allMgrEntered = mgrMasters.every((m) => {
         const entry = roundEntries.find((e) => e.masterId === m.id);
-        return entry && (
-          (typeof entry.m1 === 'number' && !isNaN(entry.m1)) ||
-          (typeof entry.m2 === 'number' && !isNaN(entry.m2)) ||
-          (typeof entry.m3 === 'number' && !isNaN(entry.m3)) ||
-          (typeof entry.m4 === 'number' && !isNaN(entry.m4)) ||
-          (typeof entry.m5 === 'number' && !isNaN(entry.m5))
-        );
+        return entry && mKeys.every((k) => typeof entry[k] === 'number' && !isNaN(entry[k] as number));
       });
       if (allMgrEntered) {
         completedManagers++;

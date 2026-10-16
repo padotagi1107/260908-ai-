@@ -33,8 +33,8 @@ interface DataEntryViewProps {
   rounds: Round[];
   masterItems: MasterItem[];
   entries: EntryData[];
-  onSaveEntry: (entry: EntryData) => void;
-  onBatchSaveEntries: (entries: EntryData[]) => void;
+  onSaveEntry: (entry: EntryData) => Promise<{ success: boolean; error?: string }>;
+  onBatchSaveEntries: (entries: EntryData[]) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const DataEntryView: React.FC<DataEntryViewProps> = ({
@@ -68,6 +68,8 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterMinDiff, setFilterMinDiff] = useState<string>('');
   const [filterMaxDiff, setFilterMaxDiff] = useState<string>('');
+
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
   // Distinct DB options for filters with both code and name
   const distinctGlAccounts = useMemo(() => {
@@ -153,7 +155,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
   const yearSpans = getYearSpans();
 
-  // Local draft state
+  // Local draft state for modified cells only
   const [draftValues, setDraftValues] = useState<{ [key: string]: number | string }>({});
   const [draftReasons, setDraftReasons] = useState<{ [key: string]: string }>({});
 
@@ -162,26 +164,12 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
   const [anchorCell, setAnchorCell] = useState<{ rIdx: number; mIdx: number } | null>(null);
   const [currentCell, setCurrentCell] = useState<{ rIdx: number; mIdx: number } | null>(null);
 
-  const handleCellFocus = (rIdx: number, mIdx: number) => {
-    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+  const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+
+  const handleCellClick = (rIdx: number, mIdx: number, e: React.MouseEvent) => {
     const master = filteredMasterItems[rIdx];
     if (!master) return;
     const cellKey = `${master.id}_${monthKeys[mIdx]}`;
-    setCurrentCell({ rIdx, mIdx });
-    if (selectedCells.size <= 1) {
-      setAnchorCell({ rIdx, mIdx });
-      setSelectedCells(new Set([cellKey]));
-    }
-  };
-
-  const handleCellClick = (rIdx: number, mIdx: number, e: React.MouseEvent) => {
-    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
-    const master = filteredMasterItems[rIdx];
-    if (!master) return;
-    const mKey = monthKeys[mIdx];
-    const cellKey = `${master.id}_${mKey}`;
-
-    setCurrentCell({ rIdx, mIdx });
 
     if (e.shiftKey && anchorCell) {
       const minR = Math.min(anchorCell.rIdx, rIdx);
@@ -199,42 +187,47 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
         }
       }
       setSelectedCells(newSelected);
+      setCurrentCell({ rIdx, mIdx });
     } else {
       setAnchorCell({ rIdx, mIdx });
+      setCurrentCell({ rIdx, mIdx });
       setSelectedCells(new Set([cellKey]));
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
-    const activeTarget = e.target as HTMLElement;
-    const isInput = activeTarget.tagName === 'INPUT';
+  const handleCellFocus = (rIdx: number, mIdx: number) => {
+    const master = filteredMasterItems[rIdx];
+    if (!master) return;
+    setAnchorCell({ rIdx, mIdx });
+    setCurrentCell({ rIdx, mIdx });
+    setSelectedCells(new Set([`${master.id}_${monthKeys[mIdx]}`]));
+  };
 
-    // Ctrl + C (Copy selected cells)
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    const activeTarget = document.activeElement;
+    const isInput = activeTarget && activeTarget.tagName.toLowerCase() === 'input';
+
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
       if (selectedCells.size > 0) {
-        e.preventDefault();
         let minR = Infinity, maxR = -Infinity, minM = Infinity, maxM = -Infinity;
-        selectedCells.forEach(cellKey => {
-          const [mId, mKey] = cellKey.split('_');
-          const rIdx = filteredMasterItems.findIndex(m => m.id === mId);
-          const mIdx = monthKeys.indexOf(mKey as any);
-          if (rIdx !== -1 && mIdx !== -1) {
-            if (rIdx < minR) minR = rIdx;
-            if (rIdx > maxR) maxR = rIdx;
-            if (mIdx < minM) minM = mIdx;
-            if (mIdx > maxM) maxM = mIdx;
-          }
+        filteredMasterItems.forEach((m, rIdx) => {
+          monthKeys.forEach((mKey, mIdx) => {
+            if (selectedCells.has(`${m.id}_${mKey}`)) {
+              minR = Math.min(minR, rIdx);
+              maxR = Math.max(maxR, rIdx);
+              minM = Math.min(minM, mIdx);
+              maxM = Math.max(maxM, mIdx);
+            }
+          });
         });
 
-        if (minR <= maxR && minM <= maxM) {
+        if (minR !== Infinity) {
           const rowsText: string[] = [];
           for (let ri = minR; ri <= maxR; ri++) {
-            const rowVals: string[] = [];
             const rm = filteredMasterItems[ri];
+            const rowVals: string[] = [];
             for (let mi = minM; mi <= maxM; mi++) {
-              const mk = monthKeys[mi];
-              const val = getCellValue(rm.id, mk);
+              const val = getCellValue(rm.id, monthKeys[mi]);
               rowVals.push(val !== '' && val !== undefined && val !== null ? String(val) : '');
             }
             rowsText.push(rowVals.join('\t'));
@@ -245,7 +238,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       return;
     }
 
-    // Delete / Backspace (Clear values in selected cells)
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (selectedCells.size > 0 && !isClosed) {
         const shouldClearSelection =
@@ -265,58 +257,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
         }
       }
     }
-
-    // Arrow navigation & Shift + Arrow range selection
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-      if (isInput && !e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-        return;
-      }
-
-      e.preventDefault();
-
-      if (!currentCell && filteredMasterItems.length > 0) {
-        const initial = { rIdx: 0, mIdx: 0 };
-        setCurrentCell(initial);
-        setAnchorCell(initial);
-        setSelectedCells(new Set([`${filteredMasterItems[0].id}_m1`]));
-        return;
-      }
-
-      if (currentCell) {
-        let { rIdx, mIdx } = currentCell;
-        if (e.key === 'ArrowUp') rIdx = Math.max(0, rIdx - 1);
-        if (e.key === 'ArrowDown') rIdx = Math.min(filteredMasterItems.length - 1, rIdx + 1);
-        if (e.key === 'ArrowLeft') mIdx = Math.max(0, mIdx - 1);
-        if (e.key === 'ArrowRight') mIdx = Math.min(4, mIdx + 1);
-
-        setCurrentCell({ rIdx, mIdx });
-
-        const startAnchor = anchorCell || currentCell;
-        if (e.shiftKey) {
-          const minR = Math.min(startAnchor.rIdx, rIdx);
-          const maxR = Math.max(startAnchor.rIdx, rIdx);
-          const minM = Math.min(startAnchor.mIdx, mIdx);
-          const maxM = Math.max(startAnchor.mIdx, mIdx);
-
-          const newSelected = new Set<string>();
-          for (let ri = minR; ri <= maxR; ri++) {
-            for (let mi = minM; mi <= maxM; mi++) {
-              const rm = filteredMasterItems[ri];
-              if (rm) {
-                newSelected.add(`${rm.id}_${monthKeys[mi]}`);
-              }
-            }
-          }
-          setSelectedCells(newSelected);
-        } else {
-          setAnchorCell({ rIdx, mIdx });
-          const targetMaster = filteredMasterItems[rIdx];
-          if (targetMaster) {
-            setSelectedCells(new Set([`${targetMaster.id}_${monthKeys[mIdx]}`]));
-          }
-        }
-      }
-    }
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>, startMasterId: string, startMonthKey: 'm1'|'m2'|'m3'|'m4'|'m5') => {
@@ -328,7 +268,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     const rows = text.split(/\r?\n/).filter(r => r.length > 0);
     const parsedMatrix = rows.map(r => r.split('\t'));
 
-    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
     const startMIdx = monthKeys.indexOf(startMonthKey);
     const startRIdx = filteredMasterItems.findIndex(m => m.id === startMasterId);
 
@@ -360,8 +299,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
   const roundEntries = entries.filter((e) => e.roundId === selectedRoundId);
 
-  // Find previous round for comparison:
-  // e.g. 9-2차 comparison is 9-1차, 9-1차 comparison is 8-2차
+  // Find previous round for comparison
   const getPreviousRound = () => {
     if (!currentRound) return undefined;
     const currentIndex = rounds.findIndex((r) => r.id === currentRound.id);
@@ -380,9 +318,10 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
     const entry = roundEntries.find((e) => e.masterId === masterId);
     if (!entry) return '';
-    return entry[monthKey];
+    return entry[monthKey] !== null && entry[monthKey] !== undefined ? entry[monthKey] : '';
   };
 
+  // Requirement 3: Return null when no data in previous round (비교 불가)
   const getPrevMonthValue = (masterId: string, currentMonthNum: number): number | null => {
     if (!prevRound) return null;
     const prevRoundMonths = getRoundMonths(prevRound);
@@ -390,14 +329,14 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     if (prevMonthIdx === -1) return null;
 
     const prevEntry = prevRoundEntries.find((e) => e.masterId === masterId);
-    if (!prevEntry) return 0; // 지난추정값이 없더라도 0으로 간주하여 차이금액 계산 가능하게 함
+    if (!prevEntry) return null;
 
     const keys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
     const key = keys[prevMonthIdx];
     const val = prevEntry[key];
-    if (val === '' || val === null || val === undefined) return 0;
+    if (val === '' || val === null || val === undefined) return null;
     const num = Number(val);
-    return isNaN(num) ? 0 : num;
+    return isNaN(num) ? null : num;
   };
 
   const filteredMasterItems = masterItems.filter((m) => {
@@ -412,34 +351,29 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     const matchesManager = (m.manager || '').toLowerCase().includes((filterManager || '').toLowerCase());
 
     const entry = roundEntries.find((e) => e.masterId === m.id);
-    const hasData = entry && (
-      (typeof entry.m1 === 'number' && !isNaN(entry.m1)) ||
-      (typeof entry.m2 === 'number' && !isNaN(entry.m2)) ||
-      (typeof entry.m3 === 'number' && !isNaN(entry.m3)) ||
-      (typeof entry.m4 === 'number' && !isNaN(entry.m4)) ||
-      (typeof entry.m5 === 'number' && !isNaN(entry.m5))
-    );
+    // Requirement 3: An item is completed ONLY IF all 5 months are entered!
+    const isCompleted = entry && monthKeys.every((k) => typeof entry[k] === 'number' && !isNaN(entry[k] as number));
 
     let matchesStatus = true;
-    if (filterStatus === 'entered') matchesStatus = !!hasData;
-    if (filterStatus === 'empty') matchesStatus = !hasData;
+    if (filterStatus === 'entered') matchesStatus = !!isCompleted;
+    if (filterStatus === 'empty') matchesStatus = !isCompleted;
 
     let matchesDiff = true;
     if (filterMinDiff !== '' || filterMaxDiff !== '') {
       const minD = filterMinDiff !== '' ? Number(filterMinDiff) : -Infinity;
       const maxD = filterMaxDiff !== '' ? Number(filterMaxDiff) : Infinity;
 
-      const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
       let hasMatchingDiff = false;
       [0, 1, 2, 3, 4].forEach((idx) => {
         const mKey = monthKeys[idx];
         const mNum = roundMonths[idx];
         const curVal = getCellValue(m.id, mKey);
         const prevVal = getPrevMonthValue(m.id, mNum);
-        const cleanCur = typeof curVal === 'string' ? curVal.replace(/,/g, '') : curVal;
+        const cleanCur = typeof curVal === 'string' ? curVal.replace(/,/g, '').trim() : curVal;
         const numCur = typeof curVal === 'number' ? curVal : parseFloat(String(cleanCur));
-        if (!isNaN(numCur) && prevVal !== null) {
-          // 부호 반대로 계산 (지난추정 - 금번추정)
+
+        // Requirement 3: Only compare if BOTH exist as numbers
+        if (cleanCur !== '' && !isNaN(numCur) && prevVal !== null) {
           const diff = prevVal - numCur;
           if (diff >= minD && diff <= maxD) {
             hasMatchingDiff = true;
@@ -466,21 +400,17 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       alert('현재 회차는 마감되어 데이터를 수정할 수 없습니다.');
       return;
     }
-    // 쉼표 제거 후 유효성 검사
     const rawVal = val.replace(/,/g, '').trim();
 
-    // Allow empty string, '-', '.', '-.'
     if (rawVal === '' || rawVal === '-' || rawVal === '.' || rawVal === '-.') {
       setDraftValues((prev) => ({ ...prev, [`${masterId}_${monthKey}`]: rawVal }));
       return;
     }
 
-    // Allow valid numbers with at most 1 decimal place (e.g. 1, 1., 1.5, -3, -3.2, .5)
     if (!/^-?\d*(\.\d{0,1})?$/.test(rawVal)) {
       return;
     }
 
-    // 자동으로 천단위 쉼표 포맷 적용
     const formatted = formatWithCommas(rawVal);
     setDraftValues((prev) => ({ ...prev, [`${masterId}_${monthKey}`]: formatted }));
   };
@@ -514,15 +444,14 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     return entry?.reason || '';
   };
 
-  // Unit is 백만원. 1천만원 = 10 백만원.
+  // Requirement 3: Check variance ONLY when BOTH prev and cur are numbers!
   const hasLargeVariance = (masterId: string) => {
-    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
     for (let idx = 0; idx < 5; idx++) {
       const val = getCellValue(masterId, monthKeys[idx]);
       const mNum = roundMonths[idx];
       const prevVal = getPrevMonthValue(masterId, mNum);
-      if (val !== '' && val !== '.' && val !== '-' && val !== '-.' && prevVal !== null) {
-        const cleanVal = String(val).replace(/,/g, '');
+      if (val !== '' && val !== '.' && val !== '-' && val !== '-.' && val !== undefined && val !== null && prevVal !== null) {
+        const cleanVal = String(val).replace(/,/g, '').trim();
         const numVal = Number(cleanVal);
         if (!isNaN(numVal) && Math.abs(prevVal - numVal) >= 10) {
           return true;
@@ -532,17 +461,31 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     return false;
   };
 
-  const handleSaveAll = () => {
+  // Requirement 2: Save ONLY changed items, do not overwrite other items, verify DB success
+  const handleSaveAll = async () => {
     if (isClosed) {
       alert('마감된 회차는 저장할 수 없습니다.');
       return;
     }
 
-    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
+    // Identify which master items were modified in drafts
+    const modifiedMasterIds = new Set<string>();
+    Object.keys(draftValues).forEach((key) => {
+      const mId = key.split('_')[0];
+      if (mId) modifiedMasterIds.add(mId);
+    });
+    Object.keys(draftReasons).forEach((mId) => modifiedMasterIds.add(mId));
 
-    for (const master of filteredMasterItems) {
-      if (hasLargeVariance(master.id)) {
-        const reason = getReasonForMaster(master.id);
+    if (modifiedMasterIds.size === 0) {
+      alert('수정되거나 변경된 항목이 없습니다.');
+      return;
+    }
+
+    // Check large variance reason for modified items
+    for (const masterId of modifiedMasterIds) {
+      const master = masterItems.find((m) => m.id === masterId);
+      if (master && hasLargeVariance(masterId)) {
+        const reason = getReasonForMaster(masterId);
         if (!reason || reason.trim() === '') {
           alert(
             `[저장 불가] 1천만원 이상 차이가 발생하는 항목이 존재합니다.\n\n- GL계정: ${master.glCode} (${master.glName} - ${master.subItem})\n- 사유 미입력 시 저장이 불가합니다. '차이사유' 열에 사유를 입력해 주세요.`
@@ -552,57 +495,75 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       }
     }
 
-    const newEntriesMap = new Map<string, EntryData>();
-    roundEntries.forEach((en) => newEntriesMap.set(en.masterId, { ...en }));
+    setIsSaving(true);
 
-    filteredMasterItems.forEach((master) => {
-      let entry = newEntriesMap.get(master.id);
-      if (!entry) {
-        entry = {
+    try {
+      // Build ONLY changed EntryData objects
+      const changedEntries: EntryData[] = [];
+      modifiedMasterIds.forEach((masterId) => {
+        const master = masterItems.find((m) => m.id === masterId);
+        if (!master) return;
+
+        const existing = roundEntries.find((e) => e.masterId === masterId);
+
+        const getValueForMonth = (mKey: 'm1' | 'm2' | 'm3' | 'm4' | 'm5'): number | '' => {
+          const draftKey = `${masterId}_${mKey}`;
+          if (draftKey in draftValues) {
+            const raw = draftValues[draftKey];
+            if (raw === '' || raw === '.' || raw === '-' || raw === '-.') return '';
+            const num = Number(String(raw).replace(/,/g, '').trim());
+            return isNaN(num) ? '' : Number(num.toFixed(1));
+          }
+          return existing && existing[mKey] !== undefined && existing[mKey] !== null ? existing[mKey] : '';
+        };
+
+        const entry: EntryData = {
           id: `${selectedRoundId}_${master.id}`,
           roundId: selectedRoundId,
           masterId: master.id,
           dept: master.dept,
-          m1: '',
-          m2: '',
-          m3: '',
-          m4: '',
-          m5: '',
-          reason: '',
+          m1: getValueForMonth('m1'),
+          m2: getValueForMonth('m2'),
+          m3: getValueForMonth('m3'),
+          m4: getValueForMonth('m4'),
+          m5: getValueForMonth('m5'),
+          reason: getReasonForMaster(masterId),
+          updatedAt: new Date().toISOString(),
+          updatedBy: currentUser.name,
         };
-      }
 
-      monthKeys.forEach((mKey) => {
-        const draftKey = `${master.id}_${mKey}`;
-        if (draftKey in draftValues) {
-          const rawVal = draftValues[draftKey];
-          if (rawVal === '' || rawVal === '.' || rawVal === '-' || rawVal === '-.') {
-            entry![mKey] = '';
-          } else {
-            const clean = String(rawVal).replace(/,/g, '').trim();
-            const num = Number(clean);
-            entry![mKey] = isNaN(num) ? '' : Number(num.toFixed(1));
-          }
-        }
+        changedEntries.push(entry);
       });
 
-      entry.reason = getReasonForMaster(master.id);
-      entry.updatedAt = new Date().toISOString();
-      entry.updatedBy = currentUser.name;
-      newEntriesMap.set(master.id, entry);
-    });
+      const result = await onBatchSaveEntries(changedEntries);
 
-    onBatchSaveEntries(Array.from(newEntriesMap.values()));
-    setDraftValues({});
-    alert('저장되었습니다.');
+      if (result.success) {
+        // Clear only the drafts of successfully saved items
+        const newDraftValues = { ...draftValues };
+        const newDraftReasons = { ...draftReasons };
+        modifiedMasterIds.forEach((mId) => {
+          monthKeys.forEach((k) => delete newDraftValues[`${mId}_${k}`]);
+          delete newDraftReasons[mId];
+        });
+        setDraftValues(newDraftValues);
+        setDraftReasons(newDraftReasons);
+
+        alert(`총 ${changedEntries.length}개 항목이 데이터베이스에 안전하게 저장되었습니다.`);
+      } else {
+        // Keep drafts so user does not lose data!
+        alert(`[저장 실패] 데이터베이스 저장 중 오류가 발생했습니다: ${result.error || '통신 오류'}\n\n입력하신 내용은 화면에 유지되고 있으니 잠시 후 다시 시도해 주세요.`);
+      }
+    } catch (err: any) {
+      alert(`[오류 발생] 저장 처리 중 예외가 발생했습니다: ${err?.message || err}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExcelDownload = () => {
     if (!currentRound) return;
-
-    const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
 
     const exportData = filteredMasterItems.map((master) => {
       const row: Record<string, any> = {
@@ -614,7 +575,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
         '담당자': master.manager,
       };
 
-      // Previous round columns (for reference)
+      // Previous round columns
       if (prevRound) {
         roundMonths.forEach((mNum) => {
           const prevVal = getPrevMonthValue(master.id, mNum);
@@ -626,7 +587,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       roundMonths.forEach((mNum, idx) => {
         const mKey = monthKeys[idx];
         const curVal = getCellValue(master.id, mKey);
-        const cleanVal = typeof curVal === 'string' ? curVal.replace(/,/g, '') : curVal;
+        const cleanVal = typeof curVal === 'string' ? curVal.replace(/,/g, '').trim() : curVal;
         row[`[금번_${currentRound.name}] ${mNum}월`] = typeof curVal === 'number' ? curVal : (cleanVal || '');
       });
 
@@ -636,9 +597,14 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
           const mKey = monthKeys[idx];
           const curVal = getCellValue(master.id, mKey);
           const prevVal = getPrevMonthValue(master.id, mNum);
-          const cleanCur = typeof curVal === 'string' ? curVal.replace(/,/g, '') : curVal;
+          const cleanCur = typeof curVal === 'string' ? curVal.replace(/,/g, '').trim() : curVal;
           const numCur = typeof curVal === 'number' ? curVal : parseFloat(String(cleanCur));
-          if (!isNaN(numCur) && prevVal !== null) {
+
+          if (cleanCur === '' || cleanCur === undefined || cleanCur === null) {
+            row[`[차이] ${mNum}월`] = '미입력';
+          } else if (prevVal === null) {
+            row[`[차이] ${mNum}월`] = '비교불가';
+          } else if (!isNaN(numCur)) {
             row[`[차이] ${mNum}월`] = Number((prevVal - numCur).toFixed(1));
           } else {
             row[`[차이] ${mNum}월`] = '';
@@ -646,9 +612,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
         });
       }
 
-      // Reason
       row['차이사유'] = getReasonForMaster(master.id) || '';
-
       return row;
     });
 
@@ -662,14 +626,14 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
   };
 
   const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
     if (isClosed) {
-      alert('마감된 회차는 엑셀 업로드를 통한 수정을 할 수 없습니다.');
+      alert('마감된 회차에는 데이터를 업로드할 수 없습니다.');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
-
-    const file = e.target.files?.[0];
-    if (!file) return;
 
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -678,51 +642,26 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json<any>(ws);
+        const rawData = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
 
-        if (!data || data.length === 0) {
-          alert('엑셀 파일에 데이터가 없거나 올바르지 않은 형식입니다.');
+        if (!rawData || rawData.length === 0) {
+          alert('엑셀 파일에 데이터가 비어있습니다.');
           return;
         }
 
-        const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
         const newDrafts = { ...draftValues };
         const newReasons = { ...draftReasons };
         let matchedCount = 0;
 
-        data.forEach((row) => {
-          // Normalize row keys
-          const glCode = String(row['GL계정'] || row['GL코드'] || row['glCode'] || '').trim();
-          const glName = String(row['GL계정명'] || row['glName'] || '').trim();
-          const subItem = String(row['세목'] || row['subItem'] || '').trim();
-          const attribution = String(row['귀속'] || row['attribution'] || '').trim();
-          const dept = String(row['주관부서'] || row['dept'] || '').trim();
+        rawData.forEach((row) => {
+          let glCode = String(row['GL계정'] || row['GL코드'] || row['계정코드'] || '').trim();
+          let glName = String(row['GL계정명'] || row['계정명'] || row['계정과목'] || '').trim();
+          let subItem = String(row['세목'] || row['비용세목'] || row['항목'] || '').trim();
 
-          // Find matching master item from masterItems
           const matchedMaster = masterItems.find((m) => {
-            // Strict match: glCode + subItem + attribution + dept
-            if (glCode && subItem && attribution && dept) {
-              if (m.glCode.trim() === glCode && m.subItem.trim() === subItem && m.attribution.trim() === attribution && m.dept.trim() === dept) {
-                return true;
-              }
-            }
-            // Secondary match: glCode + subItem + attribution
-            if (glCode && subItem && attribution) {
-              if (m.glCode.trim() === glCode && m.subItem.trim() === subItem && m.attribution.trim() === attribution) {
-                return true;
-              }
-            }
-            // Secondary match: glCode + subItem + dept
-            if (glCode && subItem && dept) {
-              if (m.glCode.trim() === glCode && m.subItem.trim() === subItem && m.dept.trim() === dept) {
-                return true;
-              }
-            }
-            // Match: glCode + subItem
             if (glCode && subItem && m.glCode.trim() === glCode && m.subItem.trim() === subItem) {
               return true;
             }
-            // Fallback match: glName + subItem
             if (glName && subItem && m.glName.trim() === glName && m.subItem.trim() === subItem) {
               return true;
             }
@@ -732,15 +671,12 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
           if (matchedMaster) {
             let rowHasData = false;
 
-            // Extract month values
             roundMonths.forEach((mNum, idx) => {
               const mKey = monthKeys[idx];
-              // Look for columns like "[금번_...] 9월", "9월", "금번_9월", "m1"
               let foundVal: any = undefined;
 
               for (const colKey of Object.keys(row)) {
                 const k = colKey.trim();
-                // Avoid matching previous round or diff columns
                 if (k.includes('직전') || k.includes('차이')) continue;
 
                 if (
@@ -768,7 +704,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
               }
             });
 
-            // Extract reason
             for (const colKey of Object.keys(row)) {
               const k = colKey.trim();
               if (k === '차이사유' || k === '사유' || k === '차이 사유' || k.toLowerCase() === 'reason') {
@@ -791,13 +726,13 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
         setDraftReasons(newReasons);
 
         if (matchedCount > 0) {
-          alert(`총 ${matchedCount}개 항목의 데이터(5개월치 입력값 및 차이사유)를 엑셀에서 성공적으로 불러왔습니다.\n\n화면에서 변경된 수치를 검토하신 후, [저장하기] 버튼을 눌러 확정해주세요.`);
+          alert(`총 ${matchedCount}개 항목의 데이터를 엑셀에서 불러왔습니다.\n\n수정된 수치를 검토하신 후, [저장하기] 버튼을 눌러 확정해 주세요.`);
         } else {
-          alert('일치하는 GL계정/세목 항목을 찾을 수 없거나 입력 데이터가 비어있습니다. 양식(GL계정, 세목, 월별 열 등)을 확인해주세요.');
+          alert('일치하는 GL계정/세목 항목을 찾을 수 없거나 데이터가 비어있습니다. 양식을 확인해 주세요.');
         }
       } catch (err) {
         console.error(err);
-        alert('엑셀 파일 분석 중 오류가 발생했습니다. 파일 형식을 확인해주세요.');
+        alert('엑셀 파일 분석 중 오류가 발생했습니다.');
       }
 
       if (fileInputRef.current) {
@@ -806,6 +741,13 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     };
     reader.readAsBinaryString(file);
   };
+
+  const modifiedCount = useMemo(() => {
+    const ids = new Set<string>();
+    Object.keys(draftValues).forEach((k) => ids.add(k.split('_')[0]));
+    Object.keys(draftReasons).forEach((k) => ids.add(k));
+    return ids.size;
+  }, [draftValues, draftReasons]);
 
   return (
     <div className="max-w-[98rem] mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -817,8 +759,14 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
             <select
               value={selectedRoundId}
               onChange={(e) => {
+                if (modifiedCount > 0) {
+                  if (!confirm('저장되지 않은 변경 사항이 있습니다. 회차를 전환하시겠습니까?')) {
+                    return;
+                  }
+                }
                 setSelectedRoundId(e.target.value);
                 setDraftValues({});
+                setDraftReasons({});
               }}
               className="text-xs font-bold text-[#0F2D59] bg-[#0F2D59]/10 px-2.5 py-1 rounded border border-[#0F2D59]/20 focus:outline-hidden cursor-pointer"
             >
@@ -884,15 +832,15 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
           </button>
           <button
             onClick={handleSaveAll}
-            disabled={isClosed}
+            disabled={isClosed || isSaving}
             className={`inline-flex items-center px-4 py-2 rounded-xl font-medium text-xs shadow-xs transition-colors cursor-pointer ${
               isClosed
                 ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
                 : 'bg-[#0F2D59] text-white hover:bg-[#1B365D]'
             }`}
           >
-            <Save className="w-4 h-4 mr-1.5" />
-            저장하기
+            <Save className={`w-4 h-4 mr-1.5 ${isSaving ? 'animate-pulse' : ''}`} />
+            {isSaving ? '저장 중...' : modifiedCount > 0 ? `저장하기 (${modifiedCount}건 수정됨)` : '저장하기'}
           </button>
         </div>
       </div>
@@ -914,54 +862,42 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
             )}
             <div>
               <p className="text-sm font-bold">
-                [{currentRound.name}] 대상 월: {getMonthName(0)} ~ {getMonthName(4)} ({currentRound.status === 'open' ? '입력 및 수정 가능' : '마감됨'})
+                [{currentRound.name}] 대상 5개월: {getMonthName(0)} ~ {getMonthName(4)} ({currentRound.status === 'open' ? '입력 및 수정 가능' : '마감됨'})
               </p>
-              <p className="text-xs opacity-80">
+              <p className="text-xs opacity-80 mt-0.5">
                 비교 대상 직전 회차: {prevRound ? prevRound.name : '없음'} | 1천만원(10백만원) 이상 차이 발생 시 '차이사유' 입력 필수
               </p>
             </div>
           </div>
-          {currentRound.status === 'closed' && (
-            <span className="text-xs font-semibold bg-amber-200/60 px-3 py-1 rounded-full text-amber-900">
-              읽기 전용 모드
-            </span>
-          )}
         </div>
       )}
 
-      {/* Filters Bar with Datalists (직접입력 및 목록상자 선택 가능) */}
-      <div className="bg-white rounded-xl shadow-xs border border-slate-200 p-4">
+      {/* Filter Conditions */}
+      <div className="bg-white p-4 rounded-2xl shadow-xs border border-slate-200">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-bold text-slate-700">
-            검색 및 필터 조건 (직접입력 및 목록상자 선택 가능)
-          </span>
-          <div className="flex items-center space-x-3">
-            <span className="text-xs text-slate-400">총 {filteredMasterItems.length}개 항목</span>
-            {(filterGlCode || filterSubItem || filterAttribution || filterDept !== 'all' || filterManager || filterMinDiff !== '' || filterMaxDiff !== '' || filterStatus !== 'all') && (
-              <button
-                onClick={handleResetFilters}
-                className="text-[11px] text-red-600 hover:text-red-700 font-semibold cursor-pointer underline"
-              >
-                필터 초기화
-              </button>
-            )}
-          </div>
+          <span className="text-xs font-bold text-slate-700">검색 및 상세 필터</span>
+          <button
+            onClick={handleResetFilters}
+            className="text-xs text-blue-600 hover:text-blue-800 font-semibold cursor-pointer"
+          >
+            필터 초기화
+          </button>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3">
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">GL계정</label>
             <input
               type="text"
-              list="entry-gl-codes"
-              placeholder="GL코드 선택/입력..."
+              list="entry-gl-accounts"
+              placeholder="코드 또는 계정명..."
               value={filterGlCode}
               onChange={(e) => setFilterGlCode(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
             />
-            <datalist id="entry-gl-codes">
-              {distinctGlAccounts.map((item) => (
-                <option key={item.glCode} value={item.glCode}>
-                  {item.glCode} ({item.glName})
+            <datalist id="entry-gl-accounts">
+              {distinctGlAccounts.map((gl) => (
+                <option key={gl.glCode} value={gl.glCode}>
+                  {gl.glCode} - {gl.glName}
                 </option>
               ))}
             </datalist>
@@ -972,7 +908,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
             <input
               type="text"
               list="entry-sub-items"
-              placeholder="세목 선택/입력..."
+              placeholder="세목 입력..."
               value={filterSubItem}
               onChange={(e) => setFilterSubItem(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
@@ -986,36 +922,34 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">귀속</label>
-            <input
-              type="text"
-              list="entry-attributions"
-              placeholder="귀속 선택/입력..."
+            <select
               value={filterAttribution}
               onChange={(e) => setFilterAttribution(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
-            />
-            <datalist id="entry-attributions">
+              className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden cursor-pointer"
+            >
+              <option value="all">전체</option>
               {distinctAttributions.map((attr) => (
-                <option key={attr} value={attr} />
+                <option key={attr} value={attr}>
+                  {attr}
+                </option>
               ))}
-            </datalist>
+            </select>
           </div>
 
           <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">주관부서</label>
-            <input
-              type="text"
-              list="entry-depts"
-              placeholder="부서 선택/입력..."
-              value={filterDept === 'all' ? '' : filterDept}
+            <select
+              value={filterDept}
               onChange={(e) => setFilterDept(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
-            />
-            <datalist id="entry-depts">
-              {distinctDepartments.map((dept) => (
-                <option key={dept} value={dept} />
+              className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden cursor-pointer"
+            >
+              <option value="all">전체</option>
+              {distinctDepartments.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
               ))}
-            </datalist>
+            </select>
           </div>
 
           <div>
@@ -1023,7 +957,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
             <input
               type="text"
               list="entry-managers"
-              placeholder="담당자 선택/입력..."
+              placeholder="담당자명..."
               value={filterManager}
               onChange={(e) => setFilterManager(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
@@ -1047,17 +981,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
           </div>
 
           <div>
-            <label className="block text-[11px] font-semibold text-slate-600 mb-1">차이금액 이하</label>
-            <input
-              type="number"
-              placeholder="최대 차이..."
-              value={filterMaxDiff}
-              onChange={(e) => setFilterMaxDiff(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden"
-            />
-          </div>
-
-          <div>
             <label className="block text-[11px] font-semibold text-slate-600 mb-1">입력상태</label>
             <select
               value={filterStatus}
@@ -1065,14 +988,14 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
               className="w-full px-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden cursor-pointer"
             >
               <option value="all">전체보기</option>
-              <option value="entered">입력완료</option>
-              <option value="empty">미입력</option>
+              <option value="entered">5개월 완료</option>
+              <option value="empty">미입력/미완료</option>
             </select>
           </div>
         </div>
       </div>
 
-      {/* Main Table with Horizontal Scroll & Year Grouping Headers */}
+      {/* Main Table */}
       <div className="bg-white rounded-2xl shadow-xs border border-slate-200 overflow-hidden focus:outline-none focus:ring-2 focus:ring-[#0F2D59]/30" tabIndex={0} onKeyDown={handleKeyDown}>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[1700px]">
@@ -1080,7 +1003,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
               {/* Row 0: Section Group Header */}
               <tr className="bg-[#0F2D59] text-white text-xs font-bold text-center">
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 text-left">
-                  기본 정보 (백만원)
+                  기본 정보 (단위: 백만원)
                 </th>
                 <th colSpan={5} className="py-2.5 px-3 border-r border-blue-900 bg-[#14315F]">
                   {prevRound ? prevRound.name : '이전 회차'}
@@ -1095,32 +1018,32 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                 <th className="py-2.5 px-3 bg-[#0B1D38]">차이사유</th>
               </tr>
 
-              {/* Row 1: Year Grouping Header ( 26년, 27년 같이 요약 ) */}
+              {/* Row 1: Year Grouping Header */}
               <tr className="bg-[#1A3865] text-white text-[11px] font-semibold text-center border-b border-blue-900">
                 <th colSpan={5} className="border-r border-blue-900"></th>
                 
                 {yearSpans.map((span, sIdx) => (
-                  <th key={`prev-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#1F4075] py-1`}>
-                    {String(span.year).slice(2)}년
+                  <th key={`prev-y-${sIdx}`} colSpan={span.count} className="border-r border-blue-900 bg-[#1F4075] py-1">
+                    {span.year}년
                   </th>
                 ))}
                 
                 {yearSpans.map((span, sIdx) => (
-                  <th key={`cur-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#244882] py-1`}>
-                    {String(span.year).slice(2)}년
+                  <th key={`cur-y-${sIdx}`} colSpan={span.count} className="border-r border-blue-900 bg-[#244882] py-1">
+                    {span.year}년
                   </th>
                 ))}
 
                 {yearSpans.map((span, sIdx) => (
-                  <th key={`diff-y-${sIdx}`} colSpan={span.count} className={`border-r border-blue-900 bg-[#16335C] py-1`}>
-                    {String(span.year).slice(2)}년
+                  <th key={`diff-y-${sIdx}`} colSpan={span.count} className="border-r border-blue-900 bg-[#16335C] py-1">
+                    {span.year}년
                   </th>
                 ))}
 
                 <th className="bg-[#0F2D59]"></th>
               </tr>
 
-              {/* Row 2: Month Sub-Headers with GL계정 / 세목 / 귀속 / 주관부서 / 담당자 */}
+              {/* Row 2: Month Sub-Headers */}
               <tr className="bg-slate-100 border-b border-slate-200 text-xs font-semibold text-slate-700 text-center">
                 <th className="py-2 px-3 text-left">GL계정</th>
                 <th className="py-2 px-3 text-left">세목</th>
@@ -1161,7 +1084,6 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                 </tr>
               ) : (
                 filteredMasterItems.map((master, rIdx) => {
-                  const monthKeys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
                   const reasonVal = getReasonForMaster(master.id);
                   const isOver10M = hasLargeVariance(master.id);
 
@@ -1217,7 +1139,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                               onFocus={() => handleCellFocus(rIdx, idx)}
                               onKeyDown={handleKeyDown}
                               onPaste={(e) => handlePaste(e, master.id, mKey)}
-                              placeholder="0"
+                              placeholder="-"
                               className={`w-24 text-right px-2 py-1 text-xs font-mono font-bold rounded border ${
                                 isClosed
                                   ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed'
@@ -1230,7 +1152,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                         );
                       })}
 
-                      {/* 3. Diff 5 months (Calculated) */}
+                      {/* 3. Diff 5 months: ONLY when BOTH are numbers! */}
                       {[0, 1, 2, 3, 4].map((idx) => {
                         const mKey = monthKeys[idx];
                         const mNum = roundMonths[idx];
@@ -1238,13 +1160,18 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                         const prevVal = getPrevMonthValue(master.id, mNum);
 
                         let diff: number | null = null;
-                        if (val !== '' && val !== '.' && val !== '-' && val !== '-.' && prevVal !== null) {
-                          const cleanVal = String(val).replace(/,/g, '').trim();
+                        let statusText = '-';
+
+                        const cleanVal = typeof val === 'string' ? val.replace(/,/g, '').trim() : val;
+                        const hasCurNum = cleanVal !== '' && cleanVal !== '.' && cleanVal !== '-' && cleanVal !== '-.' && cleanVal !== undefined && cleanVal !== null && !isNaN(Number(cleanVal));
+
+                        if (!hasCurNum) {
+                          statusText = '미입력';
+                        } else if (prevVal === null) {
+                          statusText = '비교불가';
+                        } else {
                           const numVal = Number(cleanVal);
-                          if (!isNaN(numVal)) {
-                            // 차이금액 식: 반대로 계산 (지난추정 - 금번추정)
-                            diff = Number((prevVal - numVal).toFixed(1));
-                          }
+                          diff = Number((prevVal - numVal).toFixed(1));
                         }
 
                         return (
@@ -1252,13 +1179,13 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                             {diff !== null ? (
                               <span
                                 className={`font-semibold ${
-                                  diff > 0 ? 'text-red-600' : diff < 0 ? 'text-blue-600' : 'text-slate-500'
+                                  diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-rose-600' : 'text-slate-500'
                                 }`}
                               >
                                 {diff > 0 ? `+${diff.toLocaleString()}` : diff.toLocaleString()}
                               </span>
                             ) : (
-                              <span className="text-slate-400">-</span>
+                              <span className="text-slate-400 text-[11px] font-sans">{statusText}</span>
                             )}
                           </td>
                         );

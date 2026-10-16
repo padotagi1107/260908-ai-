@@ -77,8 +77,9 @@ export const AIChatView: React.FC<AIChatViewProps> = ({
   }, [currentRound]);
 
   // Helper to get previous month value
-  const getPrevMonthValue = (masterId: string, monthNum: number): number => {
-    if (!prevRound) return 0;
+  // Helper to get previous month value (Requirement 3: null if missing/not entered)
+  const getPrevMonthValue = (masterId: string, monthNum: number): number | null => {
+    if (!prevRound) return null;
     const prevMonths: number[] = [];
     for (let i = 0; i < 5; i++) {
       let m = prevRound.month + i;
@@ -86,18 +87,18 @@ export const AIChatView: React.FC<AIChatViewProps> = ({
       prevMonths.push(m);
     }
     const prevIdx = prevMonths.indexOf(monthNum);
-    if (prevIdx === -1) return 0;
+    if (prevIdx === -1) return null;
 
     const prevEntry = entries.find((e) => e.roundId === prevRound.id && e.masterId === masterId);
-    if (!prevEntry) return 0;
+    if (!prevEntry) return null;
 
     const keys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
     const val = prevEntry[keys[prevIdx]];
     if (typeof val === 'number' && !isNaN(val)) return val;
-    return 0;
+    return null;
   };
 
-  // Compile items data for AI context
+  // Compile full items data for AI context across entire dataset
   const itemsData = useMemo(() => {
     if (!currentRound) return [];
 
@@ -114,19 +115,34 @@ export const AIChatView: React.FC<AIChatViewProps> = ({
 
       let itemCurTotal = 0;
       let itemPrevTotal = 0;
+      let enteredMonthsCount = 0;
+      let comparableMonthsCount = 0;
 
       const mValues = roundMonths.map((mNum, idx) => {
         const rawCur = entry?.[mKeys[idx]];
-        const curVal = typeof rawCur === 'number' && !isNaN(rawCur) ? rawCur : 0;
-        const prevVal = getPrevMonthValue(m.id, mNum);
+        const hasCur = typeof rawCur === 'number' && !isNaN(rawCur);
+        const curVal = hasCur ? rawCur : null;
 
-        itemCurTotal += curVal;
-        itemPrevTotal += prevVal;
+        if (hasCur) {
+          enteredMonthsCount++;
+          itemCurTotal += rawCur;
+        }
+
+        const prevVal = getPrevMonthValue(m.id, mNum);
+        if (prevVal !== null) {
+          itemPrevTotal += prevVal;
+        }
+
+        if (hasCur && prevVal !== null) {
+          comparableMonthsCount++;
+        }
+
         return curVal;
       });
 
-      // 차이금액 = 직전추정 - 금번추정 (+이면 개선, -이면 악화)
-      const diffTotal = Number((itemPrevTotal - itemCurTotal).toFixed(1));
+      const isEntered = enteredMonthsCount === 5;
+      const isComparable = comparableMonthsCount > 0;
+      const diffTotal = isComparable ? Number((itemPrevTotal - itemCurTotal).toFixed(1)) : null;
 
       return {
         id: m.id,
@@ -136,8 +152,10 @@ export const AIChatView: React.FC<AIChatViewProps> = ({
         glName: m.glName,
         subItem: m.subItem,
         attribution: m.attribution,
-        prevTotal: Number(itemPrevTotal.toFixed(1)),
-        curTotal: Number(itemCurTotal.toFixed(1)),
+        isEntered,
+        isComparable,
+        prevTotal: isComparable ? Number(itemPrevTotal.toFixed(1)) : null,
+        curTotal: isEntered || enteredMonthsCount > 0 ? Number(itemCurTotal.toFixed(1)) : null,
         diffTotal,
         m1: mValues[0],
         m2: mValues[1],

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ActiveTab, UserProfile } from '../types';
 import {
   Building2,
@@ -14,7 +14,13 @@ import {
   RotateCcw,
   UserCheck,
   Sparkles,
-  MessageSquareText,
+  RefreshCw,
+  Database,
+  CheckCircle,
+  AlertTriangle,
+  X,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -26,6 +32,10 @@ interface HeaderProps {
   users?: UserProfile[];
   onSwitchUser?: (userId: string) => void;
   onLogout?: () => void;
+  onRefreshData?: () => void;
+  isRefreshing?: boolean;
+  isSupabaseConnected?: boolean;
+  onOpenDbConfig?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -37,6 +47,10 @@ export const Header: React.FC<HeaderProps> = ({
   users = [],
   onSwitchUser,
   onLogout,
+  onRefreshData,
+  isRefreshing = false,
+  isSupabaseConnected = false,
+  onOpenDbConfig,
 }) => {
   const isSimulating = isRealAdmin && realAdminUser && currentUser.id !== realAdminUser.id;
 
@@ -60,14 +74,45 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* User Profile, Admin Switcher & Logout */}
-          <div className="flex items-center space-x-3">
-            {/* System Admin User Switcher (Only visible to authenticated system admins) */}
+          {/* Sync & User Profile */}
+          <div className="flex items-center space-x-2.5">
+            {/* DB Connection Status Badge */}
+            {onOpenDbConfig && (
+              <button
+                type="button"
+                onClick={onOpenDbConfig}
+                className={`hidden md:inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
+                  isSupabaseConnected
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                    : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                }`}
+                title="클라우드 DB(Supabase) 연동 상태 및 환경변수 설정"
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span>{isSupabaseConnected ? 'DB 연동 중' : '로컬 모드 (DB 설정)'}</span>
+              </button>
+            )}
+
+            {/* Refresh from DB Button */}
+            {onRefreshData && (
+              <button
+                type="button"
+                onClick={onRefreshData}
+                disabled={isRefreshing}
+                className="inline-flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition-colors disabled:opacity-50 cursor-pointer shadow-2xs"
+                title="다른 PC에서 입력한 최신 데이터를 DB에서 다시 불러옵니다"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : 'text-slate-500'}`} />
+                <span className="hidden sm:inline">{isRefreshing ? '불러오는 중...' : '최신 데이터 불러오기'}</span>
+              </button>
+            )}
+
+            {/* System Admin User Switcher */}
             {isRealAdmin && onSwitchUser && (
               <div className="flex items-center space-x-2 bg-amber-50/80 border border-amber-200 rounded-xl px-2.5 py-1.5 shadow-2xs">
                 <div className="flex items-center space-x-1.5 text-amber-900 text-xs font-semibold">
                   <Eye className="w-3.5 h-3.5 text-amber-700" />
-                  <span className="hidden sm:inline text-[11px]">사용자/권한 전환:</span>
+                  <span className="hidden sm:inline text-[11px]">권한 전환:</span>
                 </div>
                 <select
                   value={currentUser.id}
@@ -269,4 +314,3 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
-

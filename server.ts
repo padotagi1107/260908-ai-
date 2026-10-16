@@ -22,7 +22,7 @@ if (apiKey) {
   }
 }
 
-// In-memory cache for AI summaries to conserve API quota and provide instant responses
+// In-memory cache for AI summaries with data hash/checksum to invalidate upon data modification
 interface CachedSummary {
   summary: string;
   model: string;
@@ -44,12 +44,13 @@ app.post('/api/ai-summary', async (req: Request, res: Response) => {
       topVariances,
       pendingItemsCount,
       totalItemsCount,
+      dataChecksum,
       forceRefresh,
     } = req.body;
 
     const isOperator = role === 'operator';
     const targetDept = isOperator ? '전사 부서 종합' : `${department} 부서`;
-    const cacheKey = `${role}-${department || 'all'}-${currentRoundName || 'default'}`;
+    const cacheKey = `${role}-${department || 'all'}-${currentRoundName || 'default'}-${dataChecksum || 'v0'}`;
 
     // Check cache if not forcing refresh
     if (!forceRefresh && aiSummaryCache.has(cacheKey)) {
@@ -66,17 +67,42 @@ app.post('/api/ai-summary', async (req: Request, res: Response) => {
       }
     }
 
+    // Rule-based fallback summary generator
+    const generateRuleBasedSummary = () => {
+      let text = `### 📋 [규칙 기반 자동 분석] ${targetDept} 선행추정 요약 리포트\n\n`;
+      text += `> **안내**: Gemini AI API 호출 한도(429) 초과 또는 미설정으로 인해 사내 규칙 기반 분석 엔진으로 즉시 생성된 결과입니다.\n\n`;
+      text += `#### 1. 💡 총괄 요약\n`;
+      text += `- **분석 대상 회차**: **${currentRoundName}** (직전: ${prevRoundName || '비교 회차 없음'})\n`;
+      text += `- **5개월 추정 총액 (입력분)**: **${summaryData?.enteredSum?.toLocaleString() || 0} 백만원**\n`;
+      text += `- **직전 대비 차이**: **${summaryData?.diffFormatted || '비교 불가'}** *(동일 월·양쪽 입력 완료 항목 기준)*\n`;
+      text += `- **입력 완료 현황**: 총 ${totalItemsCount}개 항목 중 ${totalItemsCount - (pendingItemsCount || 0)}건 완료 (미입력: ${pendingItemsCount || 0}건)\n\n`;
+
+      text += `#### 2. ⚠️ 주요 증감 항목 (TOP 변동)\n`;
+      if (topVariances && topVariances.length > 0) {
+        topVariances.slice(0, 5).forEach((item: any, i: number) => {
+          text += `${i + 1}. **[${item.dept}] ${item.glName} (${item.subItem})**\n`;
+          text += `   - 변동: 직전 ${item.prevTotal?.toLocaleString() || 0}백만원 → 금번 ${item.curTotal?.toLocaleString() || 0}백만원 (차이: **${item.diffFormatted}**)\n`;
+          text += `   - 사유: ${item.reason ? `"${item.reason}"` : '⚠️ 사유 미기재'}\n`;
+        });
+      } else {
+        text += `- 직전 대비 유의미한 변동 항목이 없거나 비교 가능한 데이터가 부족합니다.\n`;
+      }
+      return text;
+    };
+
     if (!genAI || !apiKey) {
       return res.status(200).json({
         success: false,
-        source: 'fallback',
-        message: 'Gemini API 키가 설정되지 않아 로컬 분석 엔진으로 생성됩니다.',
+        source: 'rule_based',
+        message: 'Gemini API 키가 설정되지 않아 규칙 기반 자동 분석으로 제공됩니다.',
+        summary: generateRuleBasedSummary(),
+        timestamp: new Date().toISOString(),
       });
     }
 
     const prompt = `
 당신은 대한민국 최고 수준의 화학/소재 제조기업(LX MMA)의 최고재무책임자(CFO) 산하 경영관리팀 제조고정비 전문 수석 분석가입니다.
-아래 제공된 [제조고정비 5개월 선행추정 데이터]를 정밀 분석하여, 사용자(${isOperator ? '총괄 운영자 / 경영진' : `${department} 담당자`})에게 명확하고 실질적인 경영 인사이트와 점검 요약 리포트를 한국어로 작성하세요.
+제공된 [제조고정비 5개월 선행추정 데이터]를 정밀 분석하여, 사용자(${isOperator ? '총괄 운영자 / 경영진' : `${department} 담당자`})에게 명확한 리포트를 한국어로 작성하세요.
 
 [분석 개요]
 - 분석 대상: ${targetDept}
@@ -85,30 +111,31 @@ app.post('/api/ai-summary', async (req: Request, res: Response) => {
 - 대상 5개월: ${Array.isArray(roundMonths) ? roundMonths.join('월, ') + '월' : '5개월'}
 - 총 항목 수: ${totalItemsCount}건 (미입력 항목: ${pendingItemsCount}건)
 
+[비즈니스 부호 체계]
+- 차이금액 = 직전 추정값 - 금번 추정값
+- 차이 부호:
+  * 양수(+)이면 비용 절감(호전)이므로 백만원 뒤에 '(개선)' 표기
+  * 음수(-)이면 비용 증가(악화)이므로 백만원 뒤에 '(악화)' 표기
+  * 미입력 데이터는 0이 아니며 절감으로 취급하지 않습니다.
+
 [집계 요약 데이터]
 ${JSON.stringify(summaryData, null, 2)}
 
-[상위 주요 증감 항목 (직전 대비 변동이 큰 항목)]
+[상위 주요 증감 항목]
 ${JSON.stringify(topVariances, null, 2)}
 
-[작성 가이드라인 - 반드시 아래 4가지 항목으로 구분하여 작성할 것]
+[작성 가이드라인]
 1. 💡 **총괄 요약 및 추세 분석**:
-   - 5개월 전체 제조고정비 추정 총액과 직전 회차 대비 증감 총액 요약
-   - 월별 변동 추세의 특징 (특정 월 집중 증액 또는 감액 사유 등)
+   - 5개월 전체 제조고정비 추정 입력분 총액과 직전 회차 대비 증감 총액 요약 (동일 월·양쪽 입력 완료 항목 기준)
+   - 월별 변동 추세의 특징
 2. ⚠️ **주요 증감 항목 심층 분석**:
-   - 변동폭이 큰 주요 GL계정/세목(상위 변동 항목)의 구체적 증감 내역과 사유 평가
-   - 예산 편차의 타당성 점검
-3. 🔍 **추가적인 점검 및 주의가 필요한 요소 (리스크/점검 포인트)**:
-   - 증감폭이 큰데 구체적 사유가 누락되었거나 불명확한 항목
-   - 특정 월에 비정상적으로 튀는 값(Spike)이나 누락/0값 방치된 항목
-   - 회계 마감 및 예산 통제 관점의 확인 필요 사항
-4. 📋 **향후 조치 및 권고사항**:
-   - ${isOperator ? '총괄 운영자 관점에서 각 부서에 요구해야 할 확인 사항 및 경영진 보고 포인트' : `${department} 담당자 관점에서 회차 마감 전 점검 및 보완해야 할 실천 조치`}
+   - 변동폭이 큰 주요 GL계정/세목의 구체적 증감 내역과 사유 평가
+   - 사유 미기재 항목에 대한 보완 요구
 
-전문적이고 신뢰감 있는 비즈니스 어조로 명확하고 읽기 쉽게 마크다운 형식으로 작성해주세요. 불필요한 서두나 사족은 빼고 바로 리포트 본문으로 시작하세요.
+전문적이고 신뢰감 있는 비즈니스 어조로 마크다운 형식으로 작성해주세요.
 `;
 
-    // Try available models in order of quota availability and performance
+    // Candidate models: prioritize flash-lite to avoid 429 quota exhaustion
     const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
     let aiText = '';
     let selectedModel = '';
@@ -127,7 +154,7 @@ ${JSON.stringify(topVariances, null, 2)}
         const response: any = await Promise.race([geminiPromise, timeoutPromise]);
         if (response && response.text) {
           aiText = response.text;
-          selectedModel = model;
+          selectedModel = model === 'gemini-3.1-flash-lite' ? 'Gemini 3.1 Flash Lite' : 'Gemini 3.8 Flash';
           break;
         }
       } catch (err: any) {
@@ -135,9 +162,9 @@ ${JSON.stringify(topVariances, null, 2)}
       }
     }
 
+    const now = new Date().toISOString();
+
     if (aiText) {
-      const now = new Date().toISOString();
-      // Cache for 10 minutes to save quota
       aiSummaryCache.set(cacheKey, {
         summary: aiText,
         model: selectedModel,
@@ -154,23 +181,29 @@ ${JSON.stringify(topVariances, null, 2)}
       });
     }
 
-    // Graceful fallback to rule-based analysis if AI quota is exhausted
+    // Graceful fallback to rule-based analysis if AI quota is exhausted or API error
     return res.status(200).json({
       success: false,
-      source: 'fallback',
-      message: 'Gemini AI 호출 한도 초과로 지능형 분석 엔진 결과가 적용되었습니다.',
+      source: 'rule_based',
+      model: '규칙 기반 자동 분석 엔진',
+      message: 'Gemini AI 호출 한도 초과(429) 또는 네트워크 지연으로 규칙 기반 자동 분석 결과가 적용되었습니다.',
+      summary: generateRuleBasedSummary(),
+      timestamp: now,
     });
   } catch (error: any) {
     console.warn('[AI Summary] Unexpected failure, falling back to local engine:', error?.message || error);
     return res.status(200).json({
       success: false,
-      source: 'fallback',
-      message: '일시적인 네트워크 지연으로 지능형 분석 엔진 결과가 적용되었습니다.',
+      source: 'rule_based',
+      model: '규칙 기반 자동 분석 엔진',
+      message: '분석 처리 중 일시적인 오류로 규칙 기반 자동 분석 결과가 적용되었습니다.',
+      summary: '### 📋 규칙 기반 자동 분석 요약\n\n일시적인 네트워크 지연으로 AI 생성 리포트를 불러오지 못했습니다. 잠시 후 [AI 재분석]을 눌러주세요.',
+      timestamp: new Date().toISOString(),
     });
   }
 });
 
-// Local Intelligence Answering Engine for Fixed Cost Q&A
+// Local Intelligence Answering Engine for Fixed Cost Q&A across ALL items
 function generateLocalChatAnswer(
   question: string,
   itemsData: any[] = [],
@@ -179,35 +212,46 @@ function generateLocalChatAnswer(
 ): string {
   const q = question.toLowerCase();
 
-  const totalCur = itemsData.reduce((s, it) => s + (it.curTotal || 0), 0);
-  const totalPrev = itemsData.reduce((s, it) => s + (it.prevTotal || 0), 0);
-  const totalDiff = Number((totalPrev - totalCur).toFixed(1));
+  // Distinguish entered vs unentered
+  const enteredItems = itemsData.filter((it) => it.isEntered);
+  const unenteredCount = itemsData.length - enteredItems.length;
+
+  const totalCur = enteredItems.reduce((s, it) => s + (it.curTotal || 0), 0);
+
+  // Compare only items where both cur and prev exist
+  const comparableItems = itemsData.filter((it) => it.isComparable);
+  const totalPrevComparable = comparableItems.reduce((s, it) => s + (it.prevTotal || 0), 0);
+  const totalCurComparable = comparableItems.reduce((s, it) => s + (it.curTotal || 0), 0);
+  const totalDiff = Number((totalPrevComparable - totalCurComparable).toFixed(1));
   const diffSign = totalDiff > 0 ? `+${totalDiff.toLocaleString()} 백만원(개선)` : totalDiff < 0 ? `${totalDiff.toLocaleString()} 백만원(악화)` : `0 백만원`;
 
-  // Sorted by absolute variance
-  const sortedByAbsDiff = [...itemsData].sort((a, b) => Math.abs(b.diffTotal || 0) - Math.abs(a.diffTotal || 0));
-  const improvedItems = itemsData.filter((it) => (it.diffTotal || 0) > 0).sort((a, b) => b.diffTotal - a.diffTotal);
-  const worsenedItems = itemsData.filter((it) => (it.diffTotal || 0) < 0).sort((a, b) => a.diffTotal - b.diffTotal);
-  const missingReasonItems = itemsData.filter((it) => Math.abs(it.diffTotal || 0) >= 3 && (!it.reason || it.reason.trim() === ''));
+  const sortedByAbsDiff = [...comparableItems].sort((a, b) => Math.abs(b.diffTotal || 0) - Math.abs(a.diffTotal || 0));
+  const improvedItems = comparableItems.filter((it) => (it.diffTotal || 0) > 0).sort((a, b) => b.diffTotal - a.diffTotal);
+  const worsenedItems = comparableItems.filter((it) => (it.diffTotal || 0) < 0).sort((a, b) => a.diffTotal - b.diffTotal);
+  const missingReasonItems = comparableItems.filter((it) => Math.abs(it.diffTotal || 0) >= 3 && (!it.reason || it.reason.trim() === ''));
 
   if (q.includes('top') || q.includes('증감') || q.includes('가장 큰') || q.includes('변동')) {
-    const top3 = sortedByAbsDiff.slice(0, 5);
+    const top5 = sortedByAbsDiff.slice(0, 5);
     let md = `### 📊 ${roundName || '금번 회차'} 직전 대비 주요 증감 항목 (TOP 5)\n\n`;
-    md += `직전 회차(${prevRoundName || '직전'}) 대비 가장 변동폭이 큰 상위 항목 분석 결과입니다:\n\n`;
-    top3.forEach((item, idx) => {
-      const diffFormatted = item.diffTotal > 0 ? `+${item.diffTotal} 백만원(개선)` : item.diffTotal < 0 ? `${item.diffTotal} 백만원(악화)` : `0 백만원`;
-      md += `${idx + 1}. **[${item.dept}] ${item.glName} (${item.subItem})**\n`;
-      md += `   - **담당자**: ${item.manager} | **귀속**: ${item.attribution}\n`;
-      md += `   - **금액 변동**: 직전 ${item.prevTotal?.toLocaleString() || 0}백만원 → 금번 ${item.curTotal?.toLocaleString() || 0}백만원 (차이: **${diffFormatted}**)\n`;
-      md += `   - **기재 사유**: ${item.reason ? `"${item.reason}"` : '⚠️ **사유 미기재** (보완 필요)'}\n\n`;
-    });
+    md += `직전 회차(${prevRoundName || '직전'}) 대비 변동폭이 가장 큰 상위 항목 분석 결과입니다 (동일 대상월·양쪽 입력 완료 기준):\n\n`;
+    if (top5.length === 0) {
+      md += `- 비교 가능한 변동 항목이 없습니다.\n`;
+    } else {
+      top5.forEach((item, idx) => {
+        const diffFormatted = item.diffTotal > 0 ? `+${item.diffTotal} 백만원(개선)` : item.diffTotal < 0 ? `${item.diffTotal} 백만원(악화)` : `0 백만원`;
+        md += `${idx + 1}. **[${item.dept}] ${item.glName} (${item.subItem})**\n`;
+        md += `   - **담당자**: ${item.manager} | **귀속**: ${item.attribution}\n`;
+        md += `   - **금액 변동**: 직전 ${item.prevTotal?.toLocaleString() || 0}백만원 → 금번 ${item.curTotal?.toLocaleString() || 0}백만원 (차이: **${diffFormatted}**)\n`;
+        md += `   - **기재 사유**: ${item.reason ? `"${item.reason}"` : '⚠️ **사유 미기재** (보완 필요)'}\n\n`;
+      });
+    }
     return md;
   }
 
   if (q.includes('사유') || q.includes('누락') || q.includes('미기재') || q.includes('점검')) {
     let md = `### 🔍 차이사유 입력 점검 현황 (${roundName || '금번 회차'})\n\n`;
     if (missingReasonItems.length === 0) {
-      md += `✅ **특이사항 없음**: 변동금액(절대값 3백만원 이상)이 발생한 모든 항목에 대해 정상적으로 차이사유가 기재되어 있습니다.\n\n`;
+      md += `✅ **특이사항 없음**: 변동금액(절대값 3백만원 이상)이 발생한 모든 비교 항목에 대해 정상적으로 차이사유가 기재되어 있습니다.\n\n`;
     } else {
       md += `⚠️ **사유 미기재 고액 변동 항목 (${missingReasonItems.length}건)**:\n`;
       md += `회차 마감 전 아래 항목의 소명 사유 보완이 필요합니다:\n\n`;
@@ -223,6 +267,7 @@ function generateLocalChatAnswer(
 
   if (q.includes('개선') || q.includes('악화') || q.includes('절감') || q.includes('증액')) {
     let md = `### 📈 직전 대비 개선(+) 및 악화(-) 항목 분석 (${roundName})\n\n`;
+    md += `*(주의: 미입력 항목은 비용 절감으로 산정하지 않으며, 양쪽 입력 완료 항목만을 기준으로 비교합니다)*\n\n`;
     md += `#### 🟢 상위 개선(비용 절감) 항목 (TOP 3)\n`;
     if (improvedItems.length === 0) {
       md += `- 개선된 항목이 없습니다.\n`;
@@ -245,40 +290,71 @@ function generateLocalChatAnswer(
 
   if (q.includes('부서') || q.includes('총액') || q.includes('요약') || q.includes('브리핑')) {
     // Dept breakdown
-    const deptMap = new Map<string, { count: number; cur: number; prev: number }>();
+    const deptMap = new Map<string, { total: number; entered: number; cur: number; prevComp: number; curComp: number }>();
     itemsData.forEach((it) => {
       const d = it.dept || '기타';
-      const cur = deptMap.get(d) || { count: 0, cur: 0, prev: 0 };
-      cur.count++;
-      cur.cur += it.curTotal || 0;
-      cur.prev += it.prevTotal || 0;
+      const cur = deptMap.get(d) || { total: 0, entered: 0, cur: 0, prevComp: 0, curComp: 0 };
+      cur.total++;
+      if (it.isEntered) {
+        cur.entered++;
+        cur.cur += it.curTotal || 0;
+      }
+      if (it.isComparable) {
+        cur.prevComp += it.prevTotal || 0;
+        cur.curComp += it.curTotal || 0;
+      }
       deptMap.set(d, cur);
     });
 
     let md = `### 💡 ${roundName || '금번 회차'} 제조고정비 선행추정 총괄 분석 요약\n\n`;
-    md += `- **5개월 추정 총액**: **${totalCur.toLocaleString()} 백만원**\n`;
-    md += `- **직전 회차 대비 변동**: **${diffSign}** (직전 ${totalPrev.toLocaleString()} 백만원)\n`;
-    md += `- **총 관리 항목 수**: ${itemsData.length}건\n\n`;
+    md += `- **5개월 추정 입력분 합계**: **${totalCur.toLocaleString()} 백만원** (전체 ${itemsData.length}건 중 ${enteredItems.length}건 완료, 미입력 ${unenteredCount}건)\n`;
+    md += `- **직전 대비 차이**: **${diffSign}** *(양쪽 입력 완료 ${comparableItems.length}건 기준)*\n\n`;
 
-    md += `| 부서명 | 관리항목수 | 직전 추정(백만원) | 금번 추정(백만원) | 차이금액(백만원) |\n`;
+    md += `| 부서명 | 전체 | 완료(건) | 입력분합계(백만원) | 비교차이(백만원) |\n`;
     md += `| :--- | :---: | :---: | :---: | :---: |\n`;
 
     deptMap.forEach((val, deptName) => {
-      const dDiff = Number((val.prev - val.cur).toFixed(1));
-      const dDiffStr = dDiff > 0 ? `+${dDiff.toLocaleString()}(개선)` : dDiff < 0 ? `${dDiff.toLocaleString()}(악화)` : `0`;
-      md += `| **${deptName}** | ${val.count}건 | ${val.prev.toLocaleString()} | ${val.cur.toLocaleString()} | ${dDiffStr} |\n`;
+      const dDiff = Number((val.prevComp - val.curComp).toFixed(1));
+      const dDiffStr = val.prevComp > 0 || val.curComp > 0
+        ? dDiff > 0 ? `+${dDiff.toLocaleString()}(개선)` : dDiff < 0 ? `${dDiff.toLocaleString()}(악화)` : `0`
+        : `비교불가`;
+      md += `| **${deptName}** | ${val.total} | ${val.entered} | ${val.cur.toLocaleString()} | ${dDiffStr} |\n`;
     });
 
     return md;
   }
 
-  // Default helpful response
-  let md = `### 💬 [LX MMA 고정비 분석 AI] 질문에 대한 데이터 조회 결과\n\n`;
-  md += `**"${question}"** 에 대한 데이터 분석 결과입니다:\n\n`;
+  // Default query across all items (checking for specific GL or keyword match)
+  const matched = itemsData.filter(
+    (it) =>
+      (it.glCode && it.glCode.toLowerCase().includes(q)) ||
+      (it.glName && it.glName.toLowerCase().includes(q)) ||
+      (it.subItem && it.subItem.toLowerCase().includes(q)) ||
+      (it.manager && it.manager.toLowerCase().includes(q))
+  );
+
+  if (matched.length > 0 && matched.length <= 10) {
+    let md = `### 🔍 "${question}" 검색 결과 (${matched.length}건)\n\n`;
+    matched.forEach((it, i) => {
+      const diffFormatted = it.isComparable
+        ? it.diffTotal > 0 ? `+${it.diffTotal}백만원(개선)` : it.diffTotal < 0 ? `${it.diffTotal}백만원(악화)` : `0`
+        : '비교불가(미입력 또는 직전자료없음)';
+      md += `${i + 1}. **[${it.dept}] ${it.glCode} ${it.glName} (${it.subItem})**\n`;
+      md += `   - 담당자: ${it.manager} | 귀속: ${it.attribution}\n`;
+      md += `   - 금번 추정: ${it.isEntered ? `${it.curTotal?.toLocaleString()} 백만원` : '미입력'}\n`;
+      md += `   - 직전 대비 차이: **${diffFormatted}**\n`;
+      md += `   - 사유: ${it.reason || '사유 없음'}\n\n`;
+    });
+    return md;
+  }
+
+  // General response
+  let md = `### 💬 [LX MMA 고정비 분석 AI] 데이터 조회 결과\n\n`;
+  md += `**"${question}"** 에 대한 선행추정 데이터 종합 결과입니다:\n\n`;
   md += `- **기준 회차**: ${roundName || '현재 회차'} (직전: ${prevRoundName || '직전 회차'})\n`;
-  md += `- **현재 추정 총액**: ${totalCur.toLocaleString()} 백만원 (직전 대비 차이: **${diffSign}**)\n`;
-  md += `- **데이터 항목 수**: 총 ${itemsData.length}건의 GL/세목 항목이 등록되어 있습니다.\n\n`;
-  md += `상세한 내용이 필요하시면 아래 추천 질문을 클릭하거나, 특정 계정명/부서명을 포함하여 질문해 주십시오.\n`;
+  md += `- **입력분 합계**: **${totalCur.toLocaleString()} 백만원** (전체 ${itemsData.length}개 항목 중 ${enteredItems.length}건 입력완료, ${unenteredCount}건 미입력)\n`;
+  md += `- **직전 대비 변동 (양쪽 완료 항목 기준)**: **${diffSign}**\n\n`;
+  md += `궁금하신 부서명(예: '노경', '구매'), GL계정명, 또는 'TOP 변동', '사유 누락' 등을 입력하시면 상세 내용을 확인하실 수 있습니다.\n`;
   return md;
 }
 
@@ -301,18 +377,42 @@ app.post('/api/ai-chat', async (req: Request, res: Response) => {
 
     const monthHeaders = Array.isArray(roundMonths) ? roundMonths.map((m: any) => `${m}월`).join(', ') : '5개월';
 
-    // Format top 30 relevant items compactly to preserve context and token limits
-    const formattedData = itemsData.slice(0, 35).map((item: any, i: number) => {
-      const diffFormatted = item.diffTotal > 0 ? `+${item.diffTotal}백만원(개선)` : item.diffTotal < 0 ? `${item.diffTotal}백만원(악화)` : `0백만원`;
-      return `${i + 1}. [${item.dept}] ${item.glName} (${item.subItem} / 귀속: ${item.attribution || '공통'} / 담당: ${item.manager})
-   - 직전(${prevRoundName || '직전'}): ${item.prevTotal}백만원 → 금번(${roundName}): ${item.curTotal}백만원 (차이: ${diffFormatted})
-   - 월별(m1~m5): [${[item.m1 ?? 0, item.m2 ?? 0, item.m3 ?? 0, item.m4 ?? 0, item.m5 ?? 0].join(', ')}]
-   - 사유: ${item.reason || '사유 미기재'}`;
+    // Summary statistics over the ENTIRE dataset
+    const totalCount = itemsData.length;
+    const enteredItems = itemsData.filter((it: any) => it.isEntered);
+    const unenteredCount = totalCount - enteredItems.length;
+    const totalCurSum = enteredItems.reduce((s: number, it: any) => s + (it.curTotal || 0), 0);
+
+    const comparableItems = itemsData.filter((it: any) => it.isComparable);
+    const totalDiffComparable = comparableItems.reduce((s: number, it: any) => s + (it.diffTotal || 0), 0);
+    const totalDiffFormatted = Number(totalDiffComparable.toFixed(1));
+
+    // Department summary table for full context
+    const deptSummary: Record<string, { count: number; entered: number; sum: number }> = {};
+    itemsData.forEach((it: any) => {
+      const d = it.dept || '기타';
+      if (!deptSummary[d]) deptSummary[d] = { count: 0, entered: 0, sum: 0 };
+      deptSummary[d].count++;
+      if (it.isEntered) {
+        deptSummary[d].entered++;
+        deptSummary[d].sum += it.curTotal || 0;
+      }
+    });
+
+    // Format all items compactly so the model has the FULL picture
+    const formattedData = itemsData.map((item: any, i: number) => {
+      const diffFormatted = item.isComparable
+        ? item.diffTotal > 0 ? `+${item.diffTotal}백만원(개선)` : item.diffTotal < 0 ? `${item.diffTotal}백만원(악화)` : `0백만원`
+        : (item.isEntered ? '직전자료없음' : '미입력');
+
+      return `${i + 1}. [${item.dept}] ${item.glCode} ${item.glName} (${item.subItem} / 담당:${item.manager})
+   - 금번: ${item.isEntered ? `${item.curTotal}백만원` : '미입력'} | 직전: ${item.prevTotal !== null ? `${item.prevTotal}백만원` : '자료없음'} | 차이: ${diffFormatted}
+   - 사유: ${item.reason || '사유 없음'}`;
     }).join('\n');
 
     const prompt = `
-당신은 대한민국 최고 수준의 화학/소재 제조기업 LX MMA의 최고재무책임자(CFO) 산하 경영관리팀 제조고정비 전문 수석 AI 분석가입니다.
-현재 사내 고정비 선행추정 관리 플랫폼에서 사용자가 입력된 데이터에 대해 질문하고 있습니다.
+당신은 화학/소재 제조기업 LX MMA 최고재무책임자(CFO) 산하 경영관리팀 제조고정비 전문 수석 AI 분석가입니다.
+사용자가 입력된 5개월 선행추정 전체 데이터에 대해 질문하고 있습니다.
 
 [분석 기준 정보]
 - 금번 회차: ${roundName || '현재 회차'}
@@ -320,20 +420,25 @@ app.post('/api/ai-chat', async (req: Request, res: Response) => {
 - 대상 5개월: ${monthHeaders}
 - 사용자 역할: ${userRole === 'operator' ? '총괄 운영자 (전사 총괄 권한)' : `${userDepartment} 담당자`}
 
-[핵심 비즈니스 규칙 및 부호 체계]
-- 차이금액 = 직전 추정값 - 금번 추정값
-- 차이 부호 규정:
-  * 양수(+)이면 비용 절감/이익 호전이므로 백만원 뒤에 '(개선)' 표기: 예) +15.0 백만원(개선)
-  * 음수(-)이면 비용 증가/이익 감소이므로 백만원 뒤에 '(악화)' 표기: 예) -10.5 백만원(악화)
-  * 0이면 '0 백만원'
-- 답변 시 실제 입력된 데이터의 숫자, GL계정, 세목, 담당자, 부서명, 사유를 정확히 인용하세요.
-- 마크다운(표, 글머리기호, 강조)을 사용하여 전문적이고 시인성 높은 보고서 스타일로 명쾌하게 답변하세요.
+[전사 집계 요약]
+- 전체 관리 항목: ${totalCount}건 (입력 완료: ${enteredItems.length}건, 미입력: ${unenteredCount}건)
+- 5개월 추정 입력분 합계: ${totalCurSum.toLocaleString()} 백만원
+- 직전 대비 비교 차이 (양쪽 완료 항목 기준): ${totalDiffFormatted > 0 ? `+${totalDiffFormatted} 백만원(개선)` : totalDiffFormatted < 0 ? `${totalDiffFormatted} 백만원(악화)` : `0 백만원`}
+- 부서별 현황: ${JSON.stringify(deptSummary)}
 
-[선행추정 데이터 목록 (총 ${itemsData.length}건 중 주요 항목)]:
+[비즈니스 부호 체계]
+- 차이금액 = 직전 추정값 - 금번 추정값
+- 양수(+)이면 비용 절감(개선) / 음수(-)이면 비용 증가(악화)
+- 미입력 항목은 0이 아니므로 비용 절감으로 간주하지 마십시오.
+- 직전 데이터가 없는 항목은 '비교 불가'입니다.
+
+[전체 항목 데이터 (${totalCount}건)]:
 ${formattedData || '입력된 데이터가 없습니다.'}
 
 사용자 질문:
 ${question}
+
+질문에 대해 정확한 숫자와 부서, 담당자, 사유를 인용하여 명쾌하고 전문적인 마크다운 보고서로 답변하세요.
 `;
 
     // Candidate models
@@ -356,7 +461,7 @@ ${question}
           const response: any = await Promise.race([geminiPromise, timeoutPromise]);
           if (response && response.text) {
             aiAnswer = response.text;
-            usedModel = model.includes('flash-lite') ? 'Gemini 3.1 Flash Lite AI' : 'Gemini AI';
+            usedModel = model === 'gemini-3.1-flash-lite' ? 'Gemini 3.1 Flash Lite' : 'Gemini 3.8 Flash';
             break;
           }
         } catch (err: any) {
@@ -368,7 +473,7 @@ ${question}
     // Local fallback if AI models not available or quota exceeded
     if (!aiAnswer) {
       aiAnswer = generateLocalChatAnswer(question, itemsData, roundName, prevRoundName);
-      usedModel = '지능형 로컬 분석 엔진';
+      usedModel = '규칙 기반 지능형 분석 엔진';
     }
 
     return res.status(200).json({
@@ -384,74 +489,6 @@ ${question}
       message: error?.message || 'AI 질의응답 처리 중 오류가 발생했습니다.',
     });
   }
-});
-
-// In-memory or persisted email dispatch log for audit
-const emailDispatchLogs: Array<{
-  id: string;
-  roundId: string;
-  roundName: string;
-  type: 'request' | 'remind';
-  recipientCount: number;
-  recipients: Array<{ name: string; email: string; department?: string; pendingCount?: number }>;
-  subject: string;
-  body: string;
-  sentAt: string;
-  sentBy: string;
-  status: 'sent' | 'simulated';
-}> = [];
-
-// 2. Email Dispatch Endpoint
-app.post('/api/send-email', (req: Request, res: Response) => {
-  try {
-    const { roundId, roundName, type, recipients, subject, body, sentBy } = req.body;
-
-    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
-      return res.status(400).json({ success: false, message: '수신 대상자가 지정되지 않았습니다.' });
-    }
-
-    const logEntry = {
-      id: `mail-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-      roundId,
-      roundName,
-      type: type || 'request',
-      recipientCount: recipients.length,
-      recipients,
-      subject,
-      body,
-      sentAt: new Date().toISOString(),
-      sentBy: sentBy || '총괄 운영자',
-      status: 'sent' as const,
-    };
-
-    emailDispatchLogs.unshift(logEntry);
-
-    console.log(`[Email Dispatch] ${type === 'remind' ? 'Remind 메일' : '취합 요청 메일'} 발송 완료:`, {
-      round: roundName,
-      recipients: recipients.map((r) => `${r.name}(${r.email})`),
-      subject,
-      time: logEntry.sentAt,
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: `${recipients.length}명의 담당자에게 이메일이 성공적으로 발송되었습니다.`,
-      log: logEntry,
-    });
-  } catch (error: any) {
-    console.error('Error in /api/send-email:', error);
-    return res.status(500).json({ success: false, message: error?.message || '이메일 발송 처리 중 오류가 발생했습니다.' });
-  }
-});
-
-// 3. Email History Endpoint
-app.get('/api/email-logs', (req: Request, res: Response) => {
-  const roundId = req.query.roundId as string;
-  if (roundId) {
-    const filtered = emailDispatchLogs.filter((l) => l.roundId === roundId);
-    return res.json({ success: true, logs: filtered });
-  }
-  return res.json({ success: true, logs: emailDispatchLogs });
 });
 
 // Start dev or production server
