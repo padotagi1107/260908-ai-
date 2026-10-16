@@ -4,6 +4,30 @@ import { DEPARTMENTS } from '../initialData';
 import { Lock, Unlock, Save, FileSpreadsheet, Upload } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
+// Helper to format numbers with thousand separator commas
+export const formatWithCommas = (val: string | number | undefined | null): string => {
+  if (val === undefined || val === null || val === '') return '';
+  const str = String(val).trim();
+  if (str === '-' || str === '.' || str === '-.' || str === '-0') return str;
+
+  const clean = str.replace(/,/g, '');
+  if (clean === '' || clean === '-' || clean === '.' || clean === '-.') return clean;
+
+  const parts = clean.split('.');
+  const integerPart = parts[0];
+  const decimalPart = parts.length > 1 ? parts[1] : undefined;
+
+  const isNegative = integerPart.startsWith('-');
+  const absInt = isNegative ? integerPart.slice(1) : integerPart;
+
+  const formattedInt = (isNegative ? '-' : '') + absInt.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+  if (decimalPart !== undefined) {
+    return `${formattedInt}.${decimalPart}`;
+  }
+  return formattedInt;
+};
+
 interface DataEntryViewProps {
   currentUser: UserProfile;
   rounds: Round[];
@@ -359,19 +383,21 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
     return entry[monthKey];
   };
 
-  const getPrevMonthValue = (masterId: string, currentMonthNum: number) => {
+  const getPrevMonthValue = (masterId: string, currentMonthNum: number): number | null => {
     if (!prevRound) return null;
     const prevRoundMonths = getRoundMonths(prevRound);
     const prevMonthIdx = prevRoundMonths.indexOf(currentMonthNum);
     if (prevMonthIdx === -1) return null;
 
     const prevEntry = prevRoundEntries.find((e) => e.masterId === masterId);
-    if (!prevEntry) return null;
+    if (!prevEntry) return 0; // 지난추정값이 없더라도 0으로 간주하여 차이금액 계산 가능하게 함
 
     const keys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
     const key = keys[prevMonthIdx];
     const val = prevEntry[key];
-    return typeof val === 'number' ? val : null;
+    if (val === '' || val === null || val === undefined) return 0;
+    const num = Number(val);
+    return isNaN(num) ? 0 : num;
   };
 
   const filteredMasterItems = masterItems.filter((m) => {
@@ -410,9 +436,11 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
         const mNum = roundMonths[idx];
         const curVal = getCellValue(m.id, mKey);
         const prevVal = getPrevMonthValue(m.id, mNum);
-        const numCur = typeof curVal === 'number' ? curVal : parseFloat(String(curVal));
+        const cleanCur = typeof curVal === 'string' ? curVal.replace(/,/g, '') : curVal;
+        const numCur = typeof curVal === 'number' ? curVal : parseFloat(String(cleanCur));
         if (!isNaN(numCur) && prevVal !== null) {
-          const diff = numCur - prevVal;
+          // 부호 반대로 계산 (지난추정 - 금번추정)
+          const diff = prevVal - numCur;
           if (diff >= minD && diff <= maxD) {
             hasMatchingDiff = true;
           }
@@ -438,23 +466,40 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       alert('현재 회차는 마감되어 데이터를 수정할 수 없습니다.');
       return;
     }
-    // Allow empty string, '-', '.', '-.', or valid numbers with at most 1 decimal place (e.g. 1, 1., 1.5, -3, -3.2, .5)
-    if (val !== '' && val !== '-' && val !== '.' && val !== '-.' && !/^-?\d*(\.\d{0,1})?$/.test(val)) {
+    // 쉼표 제거 후 유효성 검사
+    const rawVal = val.replace(/,/g, '').trim();
+
+    // Allow empty string, '-', '.', '-.'
+    if (rawVal === '' || rawVal === '-' || rawVal === '.' || rawVal === '-.') {
+      setDraftValues((prev) => ({ ...prev, [`${masterId}_${monthKey}`]: rawVal }));
       return;
     }
 
-    setDraftValues((prev) => ({ ...prev, [`${masterId}_${monthKey}`]: val }));
+    // Allow valid numbers with at most 1 decimal place (e.g. 1, 1., 1.5, -3, -3.2, .5)
+    if (!/^-?\d*(\.\d{0,1})?$/.test(rawVal)) {
+      return;
+    }
+
+    // 자동으로 천단위 쉼표 포맷 적용
+    const formatted = formatWithCommas(rawVal);
+    setDraftValues((prev) => ({ ...prev, [`${masterId}_${monthKey}`]: formatted }));
   };
 
   const handleInputBlur = (masterId: string, monthKey: 'm1' | 'm2' | 'm3' | 'm4' | 'm5') => {
     const key = `${masterId}_${monthKey}`;
     const cur = draftValues[key];
     if (cur !== undefined) {
-      if (cur === '' || cur === '.' || cur === '-' || cur === '-.') {
+      const raw = String(cur).replace(/,/g, '').trim();
+      if (raw === '' || raw === '.' || raw === '-' || raw === '-.') {
         setDraftValues((prev) => ({ ...prev, [key]: '' }));
-      } else if (typeof cur === 'string') {
-        const num = parseFloat(cur);
-        setDraftValues((prev) => ({ ...prev, [key]: isNaN(num) ? '' : Number(num.toFixed(1)) }));
+      } else {
+        const num = parseFloat(raw);
+        if (isNaN(num)) {
+          setDraftValues((prev) => ({ ...prev, [key]: '' }));
+        } else {
+          const normalized = Number(num.toFixed(1));
+          setDraftValues((prev) => ({ ...prev, [key]: formatWithCommas(normalized) }));
+        }
       }
     }
   };
@@ -477,8 +522,9 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       const mNum = roundMonths[idx];
       const prevVal = getPrevMonthValue(masterId, mNum);
       if (val !== '' && val !== '.' && val !== '-' && val !== '-.' && prevVal !== null) {
-        const numVal = Number(val);
-        if (!isNaN(numVal) && Math.abs(numVal - prevVal) >= 10) {
+        const cleanVal = String(val).replace(/,/g, '');
+        const numVal = Number(cleanVal);
+        if (!isNaN(numVal) && Math.abs(prevVal - numVal) >= 10) {
           return true;
         }
       }
@@ -533,7 +579,8 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
           if (rawVal === '' || rawVal === '.' || rawVal === '-' || rawVal === '-.') {
             entry![mKey] = '';
           } else {
-            const num = Number(rawVal);
+            const clean = String(rawVal).replace(/,/g, '').trim();
+            const num = Number(clean);
             entry![mKey] = isNaN(num) ? '' : Number(num.toFixed(1));
           }
         }
@@ -579,18 +626,20 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
       roundMonths.forEach((mNum, idx) => {
         const mKey = monthKeys[idx];
         const curVal = getCellValue(master.id, mKey);
-        row[`[금번_${currentRound.name}] ${mNum}월`] = typeof curVal === 'number' ? curVal : (curVal || '');
+        const cleanVal = typeof curVal === 'string' ? curVal.replace(/,/g, '') : curVal;
+        row[`[금번_${currentRound.name}] ${mNum}월`] = typeof curVal === 'number' ? curVal : (cleanVal || '');
       });
 
-      // Variance columns
+      // Variance columns (반대로 계산: 지난추정 - 금번추정)
       if (prevRound) {
         roundMonths.forEach((mNum, idx) => {
           const mKey = monthKeys[idx];
           const curVal = getCellValue(master.id, mKey);
           const prevVal = getPrevMonthValue(master.id, mNum);
-          const numCur = typeof curVal === 'number' ? curVal : parseFloat(String(curVal));
+          const cleanCur = typeof curVal === 'string' ? curVal.replace(/,/g, '') : curVal;
+          const numCur = typeof curVal === 'number' ? curVal : parseFloat(String(cleanCur));
           if (!isNaN(numCur) && prevVal !== null) {
-            row[`[차이] ${mNum}월`] = Number((numCur - prevVal).toFixed(1));
+            row[`[차이] ${mNum}월`] = Number((prevVal - numCur).toFixed(1));
           } else {
             row[`[차이] ${mNum}월`] = '';
           }
@@ -1162,7 +1211,7 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
                               type="text"
                               inputMode="decimal"
                               disabled={isClosed}
-                              value={val}
+                              value={formatWithCommas(val)}
                               onChange={(e) => handleInputChange(master.id, mKey, e.target.value)}
                               onBlur={() => handleInputBlur(master.id, mKey)}
                               onFocus={() => handleCellFocus(rIdx, idx)}
@@ -1190,9 +1239,11 @@ export const DataEntryView: React.FC<DataEntryViewProps> = ({
 
                         let diff: number | null = null;
                         if (val !== '' && val !== '.' && val !== '-' && val !== '-.' && prevVal !== null) {
-                          const numVal = Number(val);
+                          const cleanVal = String(val).replace(/,/g, '').trim();
+                          const numVal = Number(cleanVal);
                           if (!isNaN(numVal)) {
-                            diff = Number((numVal - prevVal).toFixed(1));
+                            // 차이금액 식: 반대로 계산 (지난추정 - 금번추정)
+                            diff = Number((prevVal - numVal).toFixed(1));
                           }
                         }
 

@@ -410,6 +410,9 @@ export function App() {
         {activeTab === 'rounds' && currentUser.role === 'operator' && (
           <RoundManagement
             rounds={rounds}
+            users={users}
+            masterItems={masterItems}
+            entries={entries}
             onAddRound={handleAddRound}
             onToggleRoundStatus={handleToggleRoundStatus}
             onDeleteRound={handleDeleteRound}

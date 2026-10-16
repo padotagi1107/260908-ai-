@@ -3,6 +3,7 @@ import { Department, EntryData, MasterItem, Round, UserProfile } from '../types'
 import { DEPARTMENTS } from '../initialData';
 import { BarChart3, ChevronDown, ChevronRight, CheckCircle2, FileSpreadsheet, Layers } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { AISummaryCard } from './AISummaryCard';
 
 interface DashboardViewProps {
   currentUser: UserProfile;
@@ -134,19 +135,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
   const prevRound = getPreviousRound();
   const prevRoundEntries = prevRound ? entries.filter((e) => e.roundId === prevRound.id) : [];
 
-  const getPrevMonthValue = (masterId: string, currentMonthNum: number) => {
+  const getPrevMonthValue = (masterId: string, currentMonthNum: number): number | null => {
     if (!prevRound) return null;
     const prevRoundMonths = getRoundMonths(prevRound);
     const prevMonthIdx = prevRoundMonths.indexOf(currentMonthNum);
     if (prevMonthIdx === -1) return null;
 
     const prevEntry = prevRoundEntries.find((e) => e.masterId === masterId);
-    if (!prevEntry) return null;
+    if (!prevEntry) return 0; // 지난추정값이 없더라도 0으로 간주하여 계산 가능하게 함
 
     const keys: ('m1' | 'm2' | 'm3' | 'm4' | 'm5')[] = ['m1', 'm2', 'm3', 'm4', 'm5'];
     const key = keys[prevMonthIdx];
     const val = prevEntry[key];
-    return typeof val === 'number' ? val : null;
+    if (val === '' || val === null || val === undefined) return 0;
+    const num = Number(val);
+    return isNaN(num) ? 0 : num;
   };
 
   // Calculate department totals & completion counts based on managers
@@ -250,9 +253,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
         });
         const curTotal = Number(curMonths.reduce((a, b) => a + b, 0).toFixed(1));
 
-        // Diff 5 months
-        const diffMonths = [0, 1, 2, 3, 4].map((idx) => Number((curMonths[idx] - prevMonths[idx]).toFixed(1)));
-        const diffTotal = Number((curTotal - prevTotal).toFixed(1));
+        // Diff 5 months (반대로 계산: 지난추정 - 금번추정)
+        const diffMonths = [0, 1, 2, 3, 4].map((idx) => Number((prevMonths[idx] - curMonths[idx]).toFixed(1)));
+        const diffTotal = Number((prevTotal - curTotal).toFixed(1));
 
         return {
           manager: mgr,
@@ -278,8 +281,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
       );
       const curTotal = Number(curMonths.reduce((a, b) => a + b, 0).toFixed(1));
 
-      const diffMonths = [0, 1, 2, 3, 4].map((idx) => Number((curMonths[idx] - prevMonths[idx]).toFixed(1)));
-      const diffTotal = Number((curTotal - prevTotal).toFixed(1));
+      // Diff 5 months (반대로 계산: 지난추정 - 금번추정)
+      const diffMonths = [0, 1, 2, 3, 4].map((idx) => Number((prevMonths[idx] - curMonths[idx]).toFixed(1)));
+      const diffTotal = Number((prevTotal - curTotal).toFixed(1));
 
       return {
         dept: d.dept,
@@ -308,8 +312,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
     );
     const curTotal = Number(curMonths.reduce((a, b) => a + b, 0).toFixed(1));
 
-    const diffMonths = [0, 1, 2, 3, 4].map((idx) => Number((curMonths[idx] - prevMonths[idx]).toFixed(1)));
-    const diffTotal = Number((curTotal - prevTotal).toFixed(1));
+    // Diff 5 months (반대로 계산: 지난추정 - 금번추정)
+    const diffMonths = [0, 1, 2, 3, 4].map((idx) => Number((prevMonths[idx] - curMonths[idx]).toFixed(1)));
+    const diffTotal = Number((prevTotal - curTotal).toFixed(1));
 
     return {
       count,
@@ -461,7 +466,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
         const curVal = entry?.[mKey];
         const prevVal = getPrevMonthValue(m.id, mNum);
         if (typeof curVal === 'number' && !isNaN(curVal) && prevVal !== null) {
-          const diff = curVal - prevVal;
+          const diff = prevVal - curVal;
           if (diff >= minD && diff <= maxD) {
             hasMatchingDiff = true;
           }
@@ -579,6 +584,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
             })}
         </div>
       </div>
+
+      {/* AI Summary and Insights Section (대시보드 부서별 요약 부분 AI 분석) */}
+      <AISummaryCard
+        currentUser={currentUser}
+        currentRound={currentRound}
+        prevRound={prevRound}
+        roundMonths={roundMonths}
+        masterItems={masterItems}
+        entries={entries}
+        getPrevMonthValue={getPrevMonthValue}
+      />
 
       {/* Department & Manager Summary Table (Only for Completed Departments) */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
@@ -866,17 +882,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
         </div>
       </div>
 
-      {/* Detailed Consolidated Table with Horizontal Scroll & Year Grouping Headers */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-6 border-b border-slate-200 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <h3 className="text-base font-bold text-slate-900">
-              비용추정 세부내역
-            </h3>
-            <span className="text-xs text-slate-500">
-              * 직전 회차({prevRound ? prevRound.name : '없음'})와 금번 회차({currentRound?.name}) 비교 (단위: 백만원)
-            </span>
-          </div>
+      {/* Detailed Consolidated Table (부서별 자료 입력 및 수정 세부내역) - Only visible to General Operator */}
+      {!isDeptUser ? (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+          <div className="p-6 border-b border-slate-200 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex items-center space-x-2">
+                <h3 className="text-base font-bold text-slate-900">
+                  부서별 자료 입력 및 수정 내역 (세부내역)
+                </h3>
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-[#0F2D59] border border-blue-200">
+                  총괄 운영자 전용
+                </span>
+              </div>
+              <span className="text-xs text-slate-500">
+                * 직전 회차({prevRound ? prevRound.name : '없음'})와 금번 회차({currentRound?.name}) 비교 (단위: 백만원)
+              </span>
+            </div>
 
           {/* Filters Bar with Datalists (직접입력 및 목록상자 선택 가능) */}
           <div className="bg-slate-50/70 rounded-xl border border-slate-200 p-4">
@@ -1175,7 +1197,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
                         const prevVal = getPrevMonthValue(master.id, mNum);
                         let diff: number | null = null;
                         if (typeof curVal === 'number' && !isNaN(curVal) && prevVal !== null) {
-                          diff = curVal - prevVal;
+                          diff = Number((prevVal - curVal).toFixed(1));
                         }
 
                         return (
@@ -1209,6 +1231,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
           </table>
         </div>
       </div>
+      ) : (
+        <div className="bg-slate-50/80 rounded-2xl border border-dashed border-slate-300 p-8 text-center">
+          <p className="text-sm font-bold text-slate-700">
+            부서별 자료 입력 및 수정 세부내역은 <span className="text-[#0F2D59]">총괄 운영자</span>에게만 표시됩니다.
+          </p>
+          <p className="text-xs text-slate-500 mt-1.5 max-w-md mx-auto">
+            {currentUser.department} 담당자님은 상단 부서별 요약 및 상단 메뉴의 <strong>자료 입력</strong> 화면에서 소속 부서의 데이터를 입력하고 관리하실 수 있습니다.
+          </p>
+        </div>
+      )}
     </div>
   );
 };
