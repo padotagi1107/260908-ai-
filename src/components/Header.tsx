@@ -13,6 +13,8 @@ import {
   Eye,
   RotateCcw,
   UserCheck,
+  Sparkles,
+  MessageSquareText,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -197,6 +199,18 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Edit3 className="w-4 h-4" />
             <span>부서별 자료 입력 및 수정</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('ai_chat')}
+            className={`flex items-center space-x-2 px-4 py-2 text-xs font-medium rounded-t-lg transition-all cursor-pointer ${
+              activeTab === 'ai_chat'
+                ? 'bg-purple-500/10 text-purple-700 border-b-2 border-purple-600 font-semibold'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-purple-600" />
+            <span>AI 질의응답 (Q&A)</span>
           </button>
 
           {currentUser.role === 'operator' && (

@@ -8,6 +8,7 @@ import { MasterManagement } from './components/MasterManagement';
 import { GLMasterManagement } from './components/GLMasterManagement';
 import { RoundManagement } from './components/RoundManagement';
 import { UserManagement } from './components/UserManagement';
+import { AIChatView } from './components/AIChatView';
 import { LoginView } from './components/LoginView';
 import {
   saveCsvDataToSupabase,
@@ -378,7 +379,13 @@ export function App() {
 
       <main className="flex-1 pb-16">
         {activeTab === 'dashboard' && (
-          <DashboardView currentUser={currentUser} rounds={rounds} masterItems={masterItems} entries={entries} />
+          <DashboardView
+            currentUser={currentUser}
+            rounds={rounds}
+            masterItems={masterItems}
+            entries={entries}
+            onNavigateToAiChat={() => setActiveTab('ai_chat')}
+          />
         )}
         {activeTab === 'entry' && (
           <DataEntryView
@@ -388,6 +395,14 @@ export function App() {
             entries={entries}
             onSaveEntry={handleSaveEntry}
             onBatchSaveEntries={handleBatchSaveEntries}
+          />
+        )}
+        {activeTab === 'ai_chat' && (
+          <AIChatView
+            currentUser={currentUser}
+            rounds={rounds}
+            masterItems={masterItems}
+            entries={entries}
           />
         )}
         {activeTab === 'gl_master' && currentUser.role === 'operator' && (

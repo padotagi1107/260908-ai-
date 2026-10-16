@@ -10,9 +10,10 @@ interface DashboardViewProps {
   rounds: Round[];
   masterItems: MasterItem[];
   entries: EntryData[];
+  onNavigateToAiChat?: () => void;
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, rounds, masterItems, entries }) => {
+export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, rounds, masterItems, entries, onNavigateToAiChat }) => {
   const [selectedRoundId, setSelectedRoundId] = useState<string>(
     rounds.length > 0 ? rounds[rounds.length - 1].id : ''
   );
@@ -594,6 +595,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ currentUser, round
         masterItems={masterItems}
         entries={entries}
         getPrevMonthValue={getPrevMonthValue}
+        onNavigateToAiChat={onNavigateToAiChat}
       />
 
       {/* Department & Manager Summary Table (Only for Completed Departments) */}

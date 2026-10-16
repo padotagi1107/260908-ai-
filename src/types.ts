@@ -52,4 +52,4 @@ export interface GLMasterItem {
   glName: string; // GL계정명
 }
 
-export type ActiveTab = 'dashboard' | 'entry' | 'master' | 'gl_master' | 'rounds' | 'users';
+export type ActiveTab = 'dashboard' | 'entry' | 'ai_chat' | 'master' | 'gl_master' | 'rounds' | 'users';
