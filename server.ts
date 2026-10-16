@@ -11,6 +11,17 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
+// CORS & Preflight handling
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // Initialize GoogleGenAI SDK
 const apiKey = process.env.GEMINI_API_KEY || '';
 let genAI: GoogleGenAI | null = null;
@@ -455,7 +466,7 @@ ${question}
           });
 
           const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('AI 응답 시간 초과 (15s)')), 15000)
+            setTimeout(() => reject(new Error('AI 응답 시간 초과 (5s)')), 5000)
           );
 
           const response: any = await Promise.race([geminiPromise, timeoutPromise]);
@@ -484,10 +495,24 @@ ${question}
     });
   } catch (error: any) {
     console.error('Error in /api/ai-chat:', error);
-    return res.status(500).json({
-      success: false,
-      message: error?.message || 'AI 질의응답 처리 중 오류가 발생했습니다.',
-    });
+    // Even on server failure, gracefully provide local chat answer
+    try {
+      const { question = '', itemsData = [], roundName = '', prevRoundName = '' } = req.body || {};
+      const fallbackAnswer = generateLocalChatAnswer(question, itemsData, roundName, prevRoundName);
+      return res.status(200).json({
+        success: true,
+        answer: fallbackAnswer,
+        model: '규칙 기반 지능형 분석 엔진 (장애 복구)',
+        timestamp: new Date().toLocaleTimeString('ko-KR'),
+      });
+    } catch (fallbackErr) {
+      return res.status(200).json({
+        success: true,
+        answer: '### ⚠️ 분석 안내\n\n일시적인 데이터 처리 지연이 발생했습니다. 질문을 다시 입력해 주세요.',
+        model: '규칙 기반 지능형 분석 엔진',
+        timestamp: new Date().toLocaleTimeString('ko-KR'),
+      });
+    }
   }
 });
 

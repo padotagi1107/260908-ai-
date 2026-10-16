@@ -280,9 +280,22 @@ export const AISummaryCard: React.FC<AISummaryCardProps> = ({
         setAiDataChecksum(currentDataChecksum);
       }
     } catch (err: any) {
-      console.error('Error generating AI analysis:', err);
-      setAiAnalysisStatus('error');
-      setAiNotice('분석 요청 중 네트워크 오류가 발생했습니다. 다시 시도해 주세요.');
+      console.warn('Network error calling AI summary, falling back to local analysis:', err);
+      let localSummary = `### 📋 규칙 기반 자동 분석 요약 (${currentRound.name})\n\n`;
+      localSummary += `- **5개월 추정 입력분 합계**: **${enteredSum5M.toLocaleString()} 백만원** (${relevantMasterItems.length}개 항목 중 ${fullyEnteredItems}건 완료, ${unenteredItems}건 미입력)\n`;
+      localSummary += `- **직전 대비 비교 차이**: **${formatDiffText(comparableDiff5M)}** *(동일 대상월·양쪽 입력 완료 ${comparableCount}건 기준)*\n\n`;
+      if (topVariances.length > 0) {
+        localSummary += `#### 🔍 주요 변동 항목 (TOP 5)\n`;
+        topVariances.slice(0, 5).forEach((v, idx) => {
+          localSummary += `${idx + 1}. **[${v.dept}] ${v.glName} (${v.subItem})**: ${formatDiffText(v.diffTotal)} (사유: ${v.reason || '사유 미기재'})\n`;
+        });
+      }
+      setAiAnalysisStatus('rule_based');
+      setAiSummaryText(localSummary);
+      setAiModelName('규칙 기반 자동 분석 엔진 (로컬)');
+      setAiNotice('서버 네트워크 지연으로 로컬 규칙 기반 자동 분석 결과가 즉시 생성되었습니다.');
+      setAiTimestamp(new Date().toLocaleString('ko-KR'));
+      setAiDataChecksum(currentDataChecksum);
     }
   };
 

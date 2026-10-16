@@ -217,7 +217,189 @@ export const AIChatView: React.FC<AIChatViewProps> = ({
     '특정 월(m1~m5)에 금액이 비정상적으로 집중된 항목이 있는지 알려줘',
   ];
 
-  // Send question handler
+  // Client-side local intelligence engine for seamless fallback
+  const generateClientAnswer = (
+    qText: string,
+    items: typeof itemsData,
+    roundTitle = '',
+    prevTitle = ''
+  ): string => {
+    const q = qText.toLowerCase();
+
+    // Distinguish entered vs unentered
+    const enteredItems = items.filter((it) => it.isEntered);
+    const unenteredCount = items.length - enteredItems.length;
+    const totalCur = enteredItems.reduce((s, it) => s + (it.curTotal || 0), 0);
+
+    // Comparable items (both cur and prev entered)
+    const comparableItems = items.filter((it) => it.isComparable);
+    const totalPrevComparable = comparableItems.reduce((s, it) => s + (it.prevTotal || 0), 0);
+    const totalCurComparable = comparableItems.reduce((s, it) => s + (it.curTotal || 0), 0);
+    const totalDiff = Number((totalPrevComparable - totalCurComparable).toFixed(1));
+    const diffSign = totalDiff > 0 ? `+${totalDiff.toLocaleString()} 백만원(개선)` : totalDiff < 0 ? `${totalDiff.toLocaleString()} 백만원(악화)` : `0 백만원`;
+
+    const sortedByAbsDiff = [...comparableItems].sort((a, b) => Math.abs(b.diffTotal || 0) - Math.abs(a.diffTotal || 0));
+    const improvedItems = comparableItems.filter((it) => (it.diffTotal || 0) > 0).sort((a, b) => (b.diffTotal || 0) - (a.diffTotal || 0));
+    const worsenedItems = comparableItems.filter((it) => (it.diffTotal || 0) < 0).sort((a, b) => (a.diffTotal || 0) - (b.diffTotal || 0));
+    const missingReasonItems = comparableItems.filter((it) => Math.abs(it.diffTotal || 0) >= 3 && (!it.reason || it.reason.trim() === ''));
+
+    // TOP 5 변동
+    if (q.includes('top') || q.includes('증감') || q.includes('가장 큰') || q.includes('변동')) {
+      const top5 = sortedByAbsDiff.slice(0, 5);
+      let md = `### 📊 ${roundTitle || '금번 회차'} 직전 대비 주요 증감 항목 (TOP 5)\n\n`;
+      md += `직전 회차(${prevTitle || '직전'}) 대비 변동폭이 가장 큰 상위 항목 분석 결과입니다 (동일 대상월·양쪽 입력 완료 기준):\n\n`;
+      if (top5.length === 0) {
+        md += `- 비교 가능한 변동 항목이 없습니다.\n`;
+      } else {
+        top5.forEach((item, idx) => {
+          const diffFormatted = (item.diffTotal || 0) > 0 ? `+${item.diffTotal} 백만원(개선)` : (item.diffTotal || 0) < 0 ? `${item.diffTotal} 백만원(악화)` : `0 백만원`;
+          md += `${idx + 1}. **[${item.dept}] ${item.glName} (${item.subItem})**\n`;
+          md += `   - **담당자**: ${item.manager} | **귀속**: ${item.attribution}\n`;
+          md += `   - **금액 변동**: 직전 ${item.prevTotal?.toLocaleString() || 0}백만원 → 금번 ${item.curTotal?.toLocaleString() || 0}백만원 (차이: **${diffFormatted}**)\n`;
+          md += `   - **기재 사유**: ${item.reason ? `"${item.reason}"` : '⚠️ **사유 미기재** (담당자 확인 및 보완 필요)'}\n\n`;
+        });
+      }
+      return md;
+    }
+
+    // 사유 누락 점검
+    if (q.includes('사유') || q.includes('누락') || q.includes('미기재') || q.includes('점검')) {
+      let md = `### 🔍 차이사유 입력 점검 현황 (${roundTitle || '금번 회차'})\n\n`;
+      if (missingReasonItems.length === 0) {
+        md += `✅ **특이사항 없음**: 변동금액(절대값 3백만원 이상)이 발생한 모든 비교 항목에 대해 정상적으로 차이사유가 기재되어 있습니다.\n\n`;
+      } else {
+        md += `⚠️ **사유 미기재 고액 변동 항목 (${missingReasonItems.length}건)**:\n`;
+        md += `회차 마감 전 아래 항목의 소명 사유 보완이 필요합니다:\n\n`;
+        missingReasonItems.forEach((item, idx) => {
+          const diffFormatted = (item.diffTotal || 0) > 0 ? `+${item.diffTotal} 백만원(개선)` : `${item.diffTotal} 백만원(악화)`;
+          md += `${idx + 1}. **[${item.dept}] ${item.glName} (${item.subItem})**\n`;
+          md += `   - 담당자: **${item.manager}** | 차이: **${diffFormatted}**\n`;
+          md += `   - 조치 필요: 상세 사유 미입력 상태 (담당자 소명 필요)\n\n`;
+        });
+      }
+      return md;
+    }
+
+    // 개선 vs 악화
+    if (q.includes('개선') || q.includes('악화') || q.includes('절감') || q.includes('증액')) {
+      let md = `### 📈 직전 대비 개선(+) 및 악화(-) 항목 분석 (${roundTitle || '금번 회차'})\n\n`;
+      md += `*(안내: 미입력 항목은 비용 절감으로 산정하지 않으며, 동일 대상월에 양쪽 모두 숫자가 입력된 항목만 비교합니다)*\n\n`;
+      md += `#### 🟢 상위 개선(비용 절감) 항목 (TOP 3)\n`;
+      if (improvedItems.length === 0) {
+        md += `- 개선된 항목이 없습니다.\n`;
+      } else {
+        improvedItems.slice(0, 3).forEach((item, i) => {
+          md += `${i + 1}. **[${item.dept}] ${item.glName} (${item.subItem})**: +${item.diffTotal} 백만원(개선) (사유: ${item.reason || '사유 미기재'})\n`;
+        });
+      }
+
+      md += `\n#### 🔴 상위 악화(비용 증가) 항목 (TOP 3)\n`;
+      if (worsenedItems.length === 0) {
+        md += `- 악화된 항목이 없습니다.\n`;
+      } else {
+        worsenedItems.slice(0, 3).forEach((item, i) => {
+          md += `${i + 1}. **[${item.dept}] ${item.glName} (${item.subItem})**: ${item.diffTotal} 백만원(악화) (사유: ${item.reason || '사유 미기재'})\n`;
+        });
+      }
+      return md;
+    }
+
+    // 부서별 요약 / 경영진 브리핑
+    if (q.includes('부서') || q.includes('총액') || q.includes('요약') || q.includes('브리핑')) {
+      const deptMap = new Map<string, { total: number; entered: number; cur: number; prevComp: number; curComp: number }>();
+      items.forEach((it) => {
+        const d = it.dept || '기타';
+        const cur = deptMap.get(d) || { total: 0, entered: 0, cur: 0, prevComp: 0, curComp: 0 };
+        cur.total++;
+        if (it.isEntered) {
+          cur.entered++;
+          cur.cur += it.curTotal || 0;
+        }
+        if (it.isComparable) {
+          cur.prevComp += it.prevTotal || 0;
+          cur.curComp += it.curTotal || 0;
+        }
+        deptMap.set(d, cur);
+      });
+
+      let md = `### 💡 ${roundTitle || '금번 회차'} 제조고정비 선행추정 총괄 분석 요약\n\n`;
+      md += `- **5개월 추정 입력분 합계**: **${totalCur.toLocaleString()} 백만원** (전체 ${items.length}건 중 ${enteredItems.length}건 완료, 미입력 ${unenteredCount}건)\n`;
+      md += `- **직전 대비 비교 차이**: **${diffSign}** *(양쪽 입력 완료 ${comparableItems.length}건 기준)*\n\n`;
+
+      md += `| 부서명 | 전체 | 완료(건) | 입력분합계(백만원) | 비교차이(백만원) |\n`;
+      md += `| :--- | :---: | :---: | :---: | :---: |\n`;
+
+      deptMap.forEach((val, deptName) => {
+        const dDiff = Number((val.prevComp - val.curComp).toFixed(1));
+        const dDiffStr = val.prevComp > 0 || val.curComp > 0
+          ? dDiff > 0 ? `+${dDiff.toLocaleString()}(개선)` : dDiff < 0 ? `${dDiff.toLocaleString()}(악화)` : `0`
+          : `비교불가`;
+        md += `| **${deptName}** | ${val.total} | ${val.entered} | ${val.cur.toLocaleString()} | ${dDiffStr} |\n`;
+      });
+
+      return md;
+    }
+
+    // 특정 월 집중 항목
+    if (q.includes('집중') || q.includes('비정상') || q.includes('m1') || q.includes('특정 월')) {
+      let md = `### 📅 특정 월(m1~m5) 고정비 집중 항목 점검 (${roundTitle || '금번 회차'})\n\n`;
+      const spikedItems = items.filter((it) => {
+        const vals = [it.m1, it.m2, it.m3, it.m4, it.m5].filter((v): v is number => typeof v === 'number');
+        if (vals.length < 3) return false;
+        const max = Math.max(...vals);
+        const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+        return max >= 50 && max >= avg * 1.8;
+      });
+
+      if (spikedItems.length === 0) {
+        md += `✅ 특정 월에 비정상적으로 집중된 항목이 없습니다. (월별 고정비가 고르게 배분되어 있습니다)\n`;
+      } else {
+        md += `아래 항목들은 정기 수선, 정밀 검사, 일시적 지급 수수료 등으로 특정 월에 비용이 집중되어 있습니다:\n\n`;
+        spikedItems.slice(0, 5).forEach((item, i) => {
+          md += `${i + 1}. **[${item.dept}] ${item.glName} (${item.subItem})**\n`;
+          md += `   - 월별 추정: [${roundMonths.map((m, idx) => `${m}월:${(item as any)[`m${idx + 1}`] ?? '미입력'}`).join(', ')}]\n`;
+          md += `   - 사유: ${item.reason || '사유 미기재 (확인 필요)'}\n\n`;
+        });
+      }
+      return md;
+    }
+
+    // Default search across GL / accounts / names
+    const matched = items.filter(
+      (it) =>
+        (it.glCode && it.glCode.toLowerCase().includes(q)) ||
+        (it.glName && it.glName.toLowerCase().includes(q)) ||
+        (it.subItem && it.subItem.toLowerCase().includes(q)) ||
+        (it.manager && it.manager.toLowerCase().includes(q)) ||
+        (it.dept && it.dept.toLowerCase().includes(q))
+    );
+
+    if (matched.length > 0 && matched.length <= 10) {
+      let md = `### 🔍 "${qText}" 데이터 조회 결과 (${matched.length}건)\n\n`;
+      matched.forEach((it, i) => {
+        const diffFormatted = it.isComparable
+          ? (it.diffTotal || 0) > 0 ? `+${it.diffTotal}백만원(개선)` : (it.diffTotal || 0) < 0 ? `${it.diffTotal}백만원(악화)` : `0백만원`
+          : '비교불가(미입력 또는 직전자료없음)';
+        md += `${i + 1}. **[${it.dept}] ${it.glCode} ${it.glName} (${it.subItem})**\n`;
+        md += `   - 담당자: ${it.manager} | 귀속: ${it.attribution}\n`;
+        md += `   - 금번 추정: ${it.isEntered ? `${it.curTotal?.toLocaleString()} 백만원` : '미입력'}\n`;
+        md += `   - 직전 대비 차이: **${diffFormatted}**\n`;
+        md += `   - 사유: ${it.reason || '사유 미기재'}\n\n`;
+      });
+      return md;
+    }
+
+    // General fallback
+    let md = `### 💬 [LX MMA 고정비 분석 AI] 데이터 조회 결과\n\n`;
+    md += `**"${qText}"** 에 대한 선행추정 데이터 종합 결과입니다:\n\n`;
+    md += `- **기준 회차**: ${roundTitle || '현재 회차'} (직전: ${prevTitle || '직전 회차'})\n`;
+    md += `- **입력분 합계**: **${totalCur.toLocaleString()} 백만원** (전체 ${items.length}개 항목 중 ${enteredItems.length}건 입력완료, ${unenteredCount}건 미입력)\n`;
+    md += `- **직전 대비 변동 (양쪽 완료 항목 기준)**: **${diffSign}**\n\n`;
+    md += `추천 키워드: 'TOP 변동', '사유 누락', '개선 항목', '악화 항목', '부서별 요약', 또는 특정 부서명('노경', '생산1')이나 계정명('급여')을 입력하세요.\n`;
+    return md;
+  };
+
+  // Send question handler with fail-safe local fallback
   const handleSendMessage = async (textToSend?: string) => {
     const question = (textToSend || inputValue).trim();
     if (!question || isSending) return;
@@ -233,10 +415,14 @@ export const AIChatView: React.FC<AIChatViewProps> = ({
     setInputValue('');
     setIsSending(true);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 9000);
+
     try {
       const res = await fetch('/api/ai-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           question,
           roundName: currentRound?.name || '',
@@ -248,33 +434,48 @@ export const AIChatView: React.FC<AIChatViewProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (data.success && data.answer) {
+      clearTimeout(timeoutId);
+
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch (jsonErr) {
+        console.warn('Failed to parse ai-chat JSON response:', jsonErr);
+      }
+
+      if (data && data.success && data.answer) {
         const aiMsg: ChatMessage = {
           id: `ai-${Date.now()}`,
           role: 'assistant',
           content: data.answer,
-          model: data.model || 'Gemini 3.1 Flash Lite AI',
+          model: data.model || '규칙 기반 지능형 분석 엔진',
           timestamp: data.timestamp || new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
         };
         setMessages((prev) => [...prev, aiMsg]);
       } else {
-        const errorMsg: ChatMessage = {
+        // Fallback to client-side rule-based answer
+        const clientAnswer = generateClientAnswer(question, itemsData, currentRound?.name, prevRound?.name);
+        const aiMsg: ChatMessage = {
           id: `ai-${Date.now()}`,
           role: 'assistant',
-          content: `⚠️ 일시적으로 답변을 생성하지 못했습니다. (${data.message || '다시 시도해 주세요'})`,
+          content: clientAnswer,
+          model: '규칙 기반 지능형 분석 엔진 (로컬)',
           timestamp: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
         };
-        setMessages((prev) => [...prev, errorMsg]);
+        setMessages((prev) => [...prev, aiMsg]);
       }
     } catch (err: any) {
-      const errorMsg: ChatMessage = {
+      clearTimeout(timeoutId);
+      // Fail-safe: instead of dead error, instantly answer using local rule-based intelligence
+      const clientAnswer = generateClientAnswer(question, itemsData, currentRound?.name, prevRound?.name);
+      const aiMsg: ChatMessage = {
         id: `ai-${Date.now()}`,
         role: 'assistant',
-        content: `⚠️ 네트워크 오류로 답변을 불러오지 못했습니다. 다시 시도해 주세요.`,
+        content: `> 💡 **안내**: 서버 네트워크 응답 지연으로 로컬 규칙 기반 분석 엔진으로 즉시 산출된 답변입니다.\n\n${clientAnswer}`,
+        model: '규칙 기반 지능형 분석 엔진 (로컬 즉시 응답)',
         timestamp: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
       };
-      setMessages((prev) => [...prev, errorMsg]);
+      setMessages((prev) => [...prev, aiMsg]);
     } finally {
       setIsSending(false);
     }
